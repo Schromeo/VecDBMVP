@@ -1,0 +1,28 @@
+# build output
+build/
+out/
+cmake-build-*/
+
+# CMake
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+*.cmake
+compile_commands.json
+
+# VSCode
+.vscode/
+
+# OS / tool junk
+.DS_Store
+Thumbs.db
+
+# binaries / intermediate
+*.exe
+*.dll
+*.lib
+*.obj
+*.pdb
+*.ilk
+*.exp
