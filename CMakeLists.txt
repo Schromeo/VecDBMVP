@@ -12,7 +12,10 @@ endif()
 
 add_executable(vecdb
   src/main.cpp
+  src/vecdb/Distance.h
+  src/vecdb/Distance.cpp
 )
+
 
 # Warnings (cross-platform)
 if(MSVC)
