@@ -14,7 +14,10 @@ add_executable(vecdb
   src/main.cpp
   src/vecdb/Distance.h
   src/vecdb/Distance.cpp
+  src/vecdb/VectorStore.h
+  src/vecdb/VectorStore.cpp
 )
+
 
 
 # Warnings (cross-platform)
