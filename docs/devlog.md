@@ -175,3 +175,16 @@ Correctness → Measurability → Approximation → Performance
 
 No optimization or concurrency will be introduced
 before correctness is validated against brute-force results.
+
+
+## 2026-01-19 — Bruteforce Baseline (Exact TopK)
+
+**Done**
+- Implemented exact topK brute-force search with a size-k max-heap.
+- Added demo to compare results and establish a correctness oracle.
+
+**Why**
+- Provides ground truth for evaluating HNSW recall@K and debugging.
+
+**Next**
+- Add recall@K evaluation harness, then start HNSW layer-0 index.

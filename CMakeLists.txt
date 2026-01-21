@@ -16,7 +16,10 @@ add_executable(vecdb
   src/vecdb/Distance.cpp
   src/vecdb/VectorStore.h
   src/vecdb/VectorStore.cpp
+  src/vecdb/Bruteforce.h
+  src/vecdb/Bruteforce.cpp
 )
+
 
 
 

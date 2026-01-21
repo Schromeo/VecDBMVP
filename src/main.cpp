@@ -1,9 +1,12 @@
 #include <iostream>
 #include <vector>
 #include <iomanip>
+#include <random>
+#include <string>
 
 #include "vecdb/Distance.h"
 #include "vecdb/VectorStore.h"
+#include "vecdb/Bruteforce.h"
 
 static void print_vec(const std::vector<float>& v) {
   std::cout << "[";
@@ -27,50 +30,93 @@ int main() {
   std::cout << "Platform: Unknown" << std::endl;
 #endif
 
-  using vecdb::Distance;
-  using vecdb::Metric;
-
-  std::vector<float> a{1.0f, 0.0f};
-  std::vector<float> b{2.0f, 0.0f};
-  std::vector<float> c{0.0f, 1.0f};
-
   std::cout << std::fixed << std::setprecision(6);
 
-  std::cout << "\nDistance sanity checks:\n";
-  std::cout << "a="; print_vec(a); std::cout << "  b="; print_vec(b); std::cout << "  c="; print_vec(c); std::cout << "\n";
+  // ---------------- Distance sanity checks ----------------
+  {
+    using vecdb::Distance;
+    using vecdb::Metric;
 
-  float l2_ab = Distance::distance(Metric::L2, a.data(), b.data(), a.size());
-  float l2_ac = Distance::distance(Metric::L2, a.data(), c.data(), a.size());
-  std::cout << "L2^2(a,b) = " << l2_ab << "  (expected 1)\n";
-  std::cout << "L2^2(a,c) = " << l2_ac << "  (expected 2)\n";
+    std::vector<float> a{1.0f, 0.0f};
+    std::vector<float> b{2.0f, 0.0f};
+    std::vector<float> c{0.0f, 1.0f};
 
-  float cos_ab = Distance::distance(Metric::COSINE, a.data(), b.data(), a.size());
-  float cos_ac = Distance::distance(Metric::COSINE, a.data(), c.data(), a.size());
-  std::cout << "cosDist(a,b) = " << cos_ab << "  (expected 0, same direction)\n";
-  std::cout << "cosDist(a,c) = " << cos_ac << "  (expected 1, orthogonal)\n";
+    std::cout << "\nDistance sanity checks:\n";
+    std::cout << "a="; print_vec(a);
+    std::cout << "  b="; print_vec(b);
+    std::cout << "  c="; print_vec(c);
+    std::cout << "\n";
 
-  std::vector<float> d{3.0f, 4.0f};
-  Distance::normalize_inplace(d.data(), d.size());
-  std::cout << "normalize([3,4]) = "; print_vec(d); std::cout << "  (expected [0.6,0.8])\n";
+    float l2_ab = Distance::distance(Metric::L2, a.data(), b.data(), a.size());
+    float l2_ac = Distance::distance(Metric::L2, a.data(), c.data(), a.size());
+    std::cout << "L2^2(a,b) = " << l2_ab << "  (expected 1)\n";
+    std::cout << "L2^2(a,c) = " << l2_ac << "  (expected 2)\n";
 
-  // ---- VectorStore demo ----
-  std::cout << "\nVectorStore sanity checks:\n";
-  vecdb::VectorStore store(/*dim=*/3);
+    float cos_ab = Distance::distance(Metric::COSINE, a.data(), b.data(), a.size());
+    float cos_ac = Distance::distance(Metric::COSINE, a.data(), c.data(), a.size());
+    std::cout << "cosDist(a,b) = " << cos_ab << "  (expected 0, same direction)\n";
+    std::cout << "cosDist(a,c) = " << cos_ac << "  (expected 1, orthogonal)\n";
 
-  std::size_t i0 = store.insert("u1", std::vector<float>{1, 2, 3});
-  std::size_t i1 = store.insert("u2", std::vector<float>{2, 3, 4});
-  std::cout << "insert u1 -> index " << i0 << "\n";
-  std::cout << "insert u2 -> index " << i1 << "\n";
-  std::cout << "store.size = " << store.size() << " (expected 2)\n";
+    std::vector<float> d{3.0f, 4.0f}; // norm 5
+    Distance::normalize_inplace(d.data(), d.size());
+    std::cout << "normalize([3,4]) = "; print_vec(d);
+    std::cout << "  (expected [0.6,0.8])\n";
+  }
 
-  const float* p = store.get_ptr(i0);
-  std::cout << "get_ptr(u1) = " << (p ? "OK" : "nullptr") << "  first=" << (p ? p[0] : -1) << "\n";
+  // ---------------- VectorStore sanity checks ----------------
+  {
+    std::cout << "\nVectorStore sanity checks:\n";
+    vecdb::VectorStore store(/*dim=*/3);
 
-  bool removed = store.remove("u1");
-  std::cout << "remove(u1) = " << (removed ? "true" : "false") << " (expected true)\n";
-  std::cout << "contains(u1) = " << (store.contains("u1") ? "true" : "false") << " (expected false)\n";
-  std::cout << "get_ptr(u1_index) = " << (store.get_ptr(i0) ? "OK" : "nullptr") << " (expected nullptr)\n";
+    std::size_t i0 = store.insert("u1", std::vector<float>{1, 2, 3});
+    std::size_t i1 = store.insert("u2", std::vector<float>{2, 3, 4});
 
-  std::cout << "\nNext: implement Bruteforce baseline search\n";
+    std::cout << "insert u1 -> index " << i0 << "\n";
+    std::cout << "insert u2 -> index " << i1 << "\n";
+    std::cout << "store.size = " << store.size() << " (expected 2)\n";
+
+    const float* p = store.get_ptr(i0);
+    std::cout << "get_ptr(u1) = " << (p ? "OK" : "nullptr")
+              << "  first=" << (p ? p[0] : -1) << "\n";
+
+    bool removed = store.remove("u1");
+    std::cout << "remove(u1) = " << (removed ? "true" : "false") << " (expected true)\n";
+    std::cout << "contains(u1) = " << (store.contains("u1") ? "true" : "false") << " (expected false)\n";
+    std::cout << "get_ptr(u1_index) = " << (store.get_ptr(i0) ? "OK" : "nullptr")
+              << " (expected nullptr)\n";
+  }
+
+  // ---------------- Bruteforce demo ----------------
+  {
+    std::cout << "\nBruteforce demo:\n";
+    vecdb::VectorStore s2(/*dim=*/4);
+
+    std::mt19937 rng(42);
+    std::uniform_real_distribution<float> uni(-1.0f, 1.0f);
+
+    // Insert 100 random vectors
+    for (int i = 0; i < 100; ++i) {
+      std::vector<float> v(4);
+      for (int j = 0; j < 4; ++j) v[j] = uni(rng);
+      s2.insert("id_" + std::to_string(i), v);
+    }
+
+    // Random query
+    std::vector<float> q(4);
+    for (int j = 0; j < 4; ++j) q[j] = uni(rng);
+
+    vecdb::Bruteforce bf(s2, vecdb::Metric::L2);
+    auto top = bf.search(q, /*k=*/5);
+
+    std::cout << "Query q="; print_vec(q); std::cout << "\n";
+    std::cout << "Top5 (L2^2):\n";
+    for (const auto& r : top) {
+      std::cout << "  index=" << r.index
+                << " id=" << s2.id_at(r.index)
+                << " dist=" << r.distance << "\n";
+    }
+  }
+
+  std::cout << "\nNext: add recall@K evaluation harness, then start HNSW layer-0 index.\n";
   return 0;
 }
