@@ -138,7 +138,7 @@ int main() {
     std::cout << "\nEval harness demo (truth=bruteforce, approx=HNSW0):\n";
 
     const std::size_t dim = 32;
-    const std::size_t N = 5000;
+    const std::size_t N = 500000;
     const std::size_t num_queries = 200;
     const std::size_t k = 10;
 

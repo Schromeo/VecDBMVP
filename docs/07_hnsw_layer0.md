@@ -96,3 +96,22 @@ Insert:
 
 - Provides the first approximate index plugged into the evaluation harness.
 - Enables recall@K and latency trade-off measurement before adding hierarchy.
+
+
+## Neighbor Diversity Heuristic (7B)
+
+MVP initially selected the nearest M neighbors directly, which can cause
+neighbors to cluster in the same local region and reduce navigability.
+
+We add the classic HNSW diversity heuristic:
+
+Iterate candidates in ascending distance to the base node.
+Accept candidate `c` only if for every already selected neighbor `s`:
+`dist(c, base) < dist(c, s)`.
+
+Intuition:
+- Reject candidates that are too close to an already selected neighbor.
+- Keep neighbors that provide diverse directions, improving graph navigability.
+
+If the heuristic is too strict and selects fewer than M neighbors, we fill
+remaining slots with nearest candidates to ensure connectivity.

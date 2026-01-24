@@ -229,3 +229,20 @@ before correctness is validated against brute-force results.
 **Next**
 - Add neighbor diversity heuristic.
 - Implement hierarchical HNSW.
+
+
+## 2026-01-24 — Neighbor Diversity Heuristic (HNSW0)
+
+**Done**
+- Implemented HNSW neighbor diversity heuristic for:
+  - insertion neighbor selection
+  - degree pruning
+- Added a fallback fill step to ensure up to M neighbors are kept.
+
+**Why**
+- Prevents neighbor clustering, improves graph navigability.
+- Improves recall at the same ef_search, especially at large N.
+
+**Next**
+- Re-run ef_search sweep and compare curves (diversity on/off).
+- Implement hierarchical HNSW (multi-level) for faster navigation.

@@ -12,10 +12,12 @@ namespace vecdb {
 class Hnsw0 {
  public:
   struct Params {
-    std::size_t M = 16;                // max degree per node
-    std::size_t ef_construction = 100; // candidate pool size during insertion
+    std::size_t M = 16;                 // max degree per node
+    std::size_t ef_construction = 100;  // candidate pool size during insertion
+    bool use_diversity = true;          // enable neighbor diversity heuristic
   };
-  
+
+  // Overloads (avoid Params params = {} issues on some compilers)
   Hnsw0(const VectorStore& store, Metric metric)
       : store_(store), metric_(metric), params_() {}
 
@@ -37,11 +39,17 @@ class Hnsw0 {
                                          std::size_t entry,
                                          std::size_t ef_search) const;
 
-  // Select up to M nearest candidates (simple MVP rule; diversify later)
+  // Neighbor selection:
+  // - simple: pick nearest M
+  // - diversity: HNSW heuristic to diversify neighbors
   std::vector<std::size_t> select_neighbors_simple(const std::vector<SearchResult>& candidates,
                                                    std::size_t M) const;
 
-  // Prune neighbor list to at most M by keeping closest to 'node'
+  std::vector<std::size_t> select_neighbors_diverse(std::size_t base,
+                                                    const std::vector<SearchResult>& candidates,
+                                                    std::size_t M) const;
+
+  // Prune neighbor list to at most M by keeping a good set (diverse if enabled).
   void prune_neighbors(std::size_t node);
 
   // Utility: add an undirected edge (u <-> v), then prune both

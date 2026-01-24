@@ -38,7 +38,6 @@ std::vector<SearchResult> Hnsw0::search_layer0(const float* query_ptr,
 
   auto dist_to = [&](std::size_t idx) -> float {
     const float* v = store_.get_ptr(idx);
-    // store_.get_ptr already checks alive; but be defensive
     if (!v) return std::numeric_limits<float>::infinity();
     return Distance::distance(metric_, query_ptr, v, store_.dim());
   };
@@ -59,7 +58,6 @@ std::vector<SearchResult> Hnsw0::search_layer0(const float* query_ptr,
     Cand c = candidates.top();
     candidates.pop();
 
-    // Stop condition: best candidate is worse than worst in results
     Cand worst = results.top();
     if (c.dist > worst.dist) break;
 
@@ -106,6 +104,60 @@ std::vector<std::size_t> Hnsw0::select_neighbors_simple(const std::vector<Search
   return out;
 }
 
+// HNSW classic heuristic: diversify neighbors.
+// Accept candidate c if for all already selected s:
+//   dist(c, base) < dist(c, s)
+std::vector<std::size_t> Hnsw0::select_neighbors_diverse(std::size_t base,
+                                                         const std::vector<SearchResult>& candidates,
+                                                         std::size_t M) const {
+  std::vector<std::size_t> selected;
+  selected.reserve(std::min(M, candidates.size()));
+
+  const float* base_ptr = store_.get_ptr(base);
+  if (!base_ptr) return selected;
+
+  for (const auto& cand : candidates) {
+    if (selected.size() >= M) break;
+
+    std::size_t c = cand.index;
+    if (!store_.is_alive(c)) continue;
+    if (c == base) continue;
+
+    const float* c_ptr = store_.get_ptr(c);
+    if (!c_ptr) continue;
+
+    float dc_base = cand.distance;  // candidates are sorted by dist(base, c)
+
+    bool ok = true;
+    for (std::size_t s : selected) {
+      const float* s_ptr = store_.get_ptr(s);
+      if (!s_ptr) continue;
+
+      float dc_s = Distance::distance(metric_, c_ptr, s_ptr, store_.dim());
+      if (dc_s < dc_base) {  // too close to an already selected neighbor
+        ok = false;
+        break;
+      }
+    }
+
+    if (ok) selected.push_back(c);
+  }
+
+  // If heuristic is too strict (possible on random/unstructured data),
+  // fill the remaining slots with nearest candidates to reach M.
+  if (selected.size() < M) {
+    for (const auto& cand : candidates) {
+      if (selected.size() >= M) break;
+      std::size_t c = cand.index;
+      if (!store_.is_alive(c) || c == base) continue;
+      if (std::find(selected.begin(), selected.end(), c) != selected.end()) continue;
+      selected.push_back(c);
+    }
+  }
+
+  return selected;
+}
+
 void Hnsw0::prune_neighbors(std::size_t node) {
   auto& nbrs = neighbors_[node];
   if (nbrs.size() <= params_.M) return;
@@ -113,24 +165,26 @@ void Hnsw0::prune_neighbors(std::size_t node) {
   const float* base = store_.get_ptr(node);
   if (!base) return;
 
-  std::vector<std::pair<float, std::size_t>> scored;
-  scored.reserve(nbrs.size());
-
+  // Build candidate list: neighbors scored by dist(node, nb)
+  std::vector<SearchResult> cand;
+  cand.reserve(nbrs.size());
   for (auto nb : nbrs) {
     const float* v = store_.get_ptr(nb);
     if (!v) continue;
     float d = Distance::distance(metric_, base, v, store_.dim());
-    scored.push_back({d, nb});
+    cand.push_back({nb, d});
   }
 
-  std::sort(scored.begin(), scored.end(),
-            [](const auto& a, const auto& b) { return a.first < b.first; });
+  std::sort(cand.begin(), cand.end(),
+            [](const SearchResult& a, const SearchResult& b) {
+              return a.distance < b.distance;
+            });
 
-  nbrs.clear();
-  nbrs.reserve(std::min(params_.M, scored.size()));
-  for (std::size_t i = 0; i < scored.size() && nbrs.size() < params_.M; ++i) {
-    nbrs.push_back(scored[i].second);
-  }
+  std::vector<std::size_t> kept =
+      params_.use_diversity ? select_neighbors_diverse(node, cand, params_.M)
+                            : select_neighbors_simple(cand, params_.M);
+
+  nbrs = std::move(kept);
 }
 
 void Hnsw0::connect_bidirectional(std::size_t u, std::size_t v) {
@@ -143,9 +197,7 @@ void Hnsw0::connect_bidirectional(std::size_t u, std::size_t v) {
 void Hnsw0::insert(std::size_t index) {
   if (!store_.is_alive(index)) return;
 
-  if (index >= neighbors_.size()) {
-    neighbors_.resize(index + 1);
-  }
+  if (index >= neighbors_.size()) neighbors_.resize(index + 1);
 
   // First node becomes entry point
   if (!has_entry_) {
@@ -154,28 +206,24 @@ void Hnsw0::insert(std::size_t index) {
     return;
   }
 
-  // Search candidates using the new node as "query" without copying:
   const float* q = store_.get_ptr(index);
   if (!q) return;
 
+  // Candidates are returned sorted by distance to q (base = index)
   auto candidates = search_layer0(q, entry_point_, params_.ef_construction);
 
-  // Remove itself if present (possible if graph contains it already; defensive)
   candidates.erase(std::remove_if(candidates.begin(), candidates.end(),
                                   [&](const SearchResult& r) { return r.index == index; }),
                    candidates.end());
 
-  // Choose up to M closest neighbors
-  auto chosen = select_neighbors_simple(candidates, params_.M);
+  std::vector<std::size_t> chosen =
+      params_.use_diversity ? select_neighbors_diverse(index, candidates, params_.M)
+                            : select_neighbors_simple(candidates, params_.M);
 
-  // Connect bidirectionally
   for (auto nb : chosen) {
     if (nb >= neighbors_.size()) neighbors_.resize(nb + 1);
     connect_bidirectional(index, nb);
   }
-
-  // Keep entry point fixed for MVP.
-  // (Future: choose highest-level node, or update by heuristic.)
 }
 
 std::vector<SearchResult> Hnsw0::search(const std::vector<float>& query,
@@ -188,7 +236,6 @@ std::vector<SearchResult> Hnsw0::search(const std::vector<float>& query,
 
   std::size_t ef = std::max(ef_search, k);
   auto candidates = search_layer0(query.data(), entry_point_, ef);
-
   if (candidates.size() > k) candidates.resize(k);
   return candidates;
 }
