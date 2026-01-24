@@ -188,3 +188,15 @@ before correctness is validated against brute-force results.
 
 **Next**
 - Add recall@K evaluation harness, then start HNSW layer-0 index.
+
+## 2026-01-24 — Recall@K & Benchmark Harness
+
+**Done**
+- Added an evaluation harness to compute recall@K and average query latency.
+- Designed harness to accept a generic search function so HNSW can be plugged in later.
+
+**Why**
+- Enables measurable validation of approximate search quality against brute-force ground truth.
+
+**Next**
+- Implement HNSW (start with layer-0) and evaluate recall/latency trade-offs.

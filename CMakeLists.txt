@@ -18,6 +18,8 @@ add_executable(vecdb
   src/vecdb/VectorStore.cpp
   src/vecdb/Bruteforce.h
   src/vecdb/Bruteforce.cpp
+  src/vecdb/Eval.h
+  src/vecdb/Eval.cpp
 )
 
 

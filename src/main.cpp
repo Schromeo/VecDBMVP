@@ -7,6 +7,7 @@
 #include "vecdb/Distance.h"
 #include "vecdb/VectorStore.h"
 #include "vecdb/Bruteforce.h"
+#include "vecdb/Eval.h"
 
 static void print_vec(const std::vector<float>& v) {
   std::cout << "[";
@@ -117,6 +118,46 @@ int main() {
     }
   }
 
-  std::cout << "\nNext: add recall@K evaluation harness, then start HNSW layer-0 index.\n";
+  std::cout << "\nEval harness demo (truth=bruteforce, approx=bruteforce):\n";
+  {
+    const std::size_t dim = 32;
+    const std::size_t N = 5000;
+    const std::size_t num_queries = 200;
+    const std::size_t k = 10;
+
+    vecdb::VectorStore store(dim);
+
+    std::mt19937 rng2(123);
+    std::uniform_real_distribution<float> uni2(-1.0f, 1.0f);
+
+    for (std::size_t i = 0; i < N; ++i) {
+      std::vector<float> v(dim);
+      for (std::size_t j = 0; j < dim; ++j) v[j] = uni2(rng2);
+      store.insert("pt_" + std::to_string(i), v);
+    }
+
+    std::vector<std::vector<float>> queries;
+    queries.reserve(num_queries);
+    for (std::size_t qi = 0; qi < num_queries; ++qi) {
+      std::vector<float> q(dim);
+      for (std::size_t j = 0; j < dim; ++j) q[j] = uni2(rng2);
+      queries.push_back(std::move(q));
+    }
+
+    vecdb::Bruteforce truth_bf(store, vecdb::Metric::L2);
+    vecdb::Bruteforce approx_bf(store, vecdb::Metric::L2);
+
+    vecdb::Evaluator eval(store);
+
+    auto report = eval.evaluate(
+        queries, k,
+        [&](const std::vector<float>& q, std::size_t kk) { return truth_bf.search(q, kk); },
+        [&](const std::vector<float>& q, std::size_t kk) { return approx_bf.search(q, kk); }
+    );
+
+    std::cout << "N=" << N << " dim=" << dim << " queries=" << num_queries << " k=" << k << "\n";
+    std::cout << "recall@k = " << report.recall_at_k << " (expected 1.0)\n";
+    std::cout << "avg_latency_ms (approx path) = " << report.avg_latency_ms << "\n";
+  }
   return 0;
 }
