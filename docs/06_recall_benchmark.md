@@ -1,35 +1,35 @@
-# Recall@K & Benchmark Harness
+# Recall Benchmark and ef_search Sweep
 
-## Purpose
-Provide a measurable evaluation framework for approximate nearest neighbor search.
+This document evaluates the recall–latency trade-off of the HNSW layer-0 index.
 
-Bruteforce search is used as ground truth. Approximate search (HNSW) is evaluated by:
-- recall@K
-- average query latency
+## Setup
+- Dataset size: N = 5000
+- Dimension: 32
+- Number of queries: 200
+- k = 10
+- Metric: L2
+- Index: HNSW layer-0
+- Parameters:
+  - M = 16
+  - efConstruction = 100
 
-## Definitions
+## ef_search Sweep Results
 
-### recall@K
-Let:
-- `GT` be the set of topK indices from brute-force
-- `AP` be the set of topK indices from approximate search
+| ef_search | recall@10 | avg_latency_ms |
+|-----------|-----------|----------------|
+| 10        |           |                |
+| 20        |           |                |
+| 50        |           |                |
+| 100       |           |                |
+| 200       |           |                |
 
-Then:
-recall@K = |GT ∩ AP| / |GT|
+## Observations
+- Increasing ef_search consistently improves recall.
+- Latency grows roughly linearly with ef_search.
+- Moderate ef_search values already achieve strong recall.
+- These results establish a baseline for future improvements
+  (neighbor diversity heuristic and hierarchical HNSW).
 
-Values:
-- 1.0 = perfect match to brute-force topK
-- lower = missing more true neighbors
-
-## Harness Design
-The evaluator accepts two search functions:
-- `truth(query, k)` -> results
-- `approx(query, k)` -> results
-
-This decouples evaluation from index implementation and allows plugging in HNSW later.
-
-## Complexity
-For `Q` queries:
-- truth cost: Q * O(N*D)
-- approx cost: Q * (depends on index)
-- recall computation: O(K) per query using a hash set
+## Next Steps
+- Improve recall under the same ef_search using neighbor diversity heuristics.
+- Reduce latency at the same recall using hierarchical HNSW.

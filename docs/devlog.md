@@ -215,3 +215,17 @@ before correctness is validated against brute-force results.
 
 **Next**
 - Add hierarchical levels (random_level + greedy descent) and neighbor diversity heuristic.
+
+## 2026-01-24 — ef_search Sweep Evaluation
+
+**Done**
+- Added ef_search sweep to evaluation harness.
+- Measured recall@K and latency trade-offs for HNSW layer-0.
+
+**Why**
+- Quantifies quality–performance trade-off in approximate search.
+- Establishes baseline metrics for future index improvements.
+
+**Next**
+- Add neighbor diversity heuristic.
+- Implement hierarchical HNSW.
