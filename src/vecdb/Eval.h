@@ -5,7 +5,7 @@
 #include <vector>
 #include <functional>
 
-#include "Bruteforce.h"
+#include "SearchResult.h"
 #include "VectorStore.h"
 
 namespace vecdb {

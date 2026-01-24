@@ -200,3 +200,18 @@ before correctness is validated against brute-force results.
 
 **Next**
 - Implement HNSW (start with layer-0) and evaluate recall/latency trade-offs.
+
+## 2026-01-24 — HNSW Layer-0 Index
+
+**Done**
+- Implemented HNSW layer-0 graph index with:
+  - search-driven insertion (efConstruction)
+  - best-first layer search (efSearch)
+  - degree constraint via pruning (M)
+- Integrated HNSW layer-0 into recall@K evaluation harness.
+
+**Why**
+- Establishes a measurable approximate search baseline before implementing hierarchy and heuristics.
+
+**Next**
+- Add hierarchical levels (random_level + greedy descent) and neighbor diversity heuristic.

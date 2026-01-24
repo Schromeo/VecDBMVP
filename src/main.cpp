@@ -8,6 +8,7 @@
 #include "vecdb/VectorStore.h"
 #include "vecdb/Bruteforce.h"
 #include "vecdb/Eval.h"
+#include "vecdb/Hnsw0.h"
 
 static void print_vec(const std::vector<float>& v) {
   std::cout << "[";
@@ -58,7 +59,7 @@ int main() {
     std::cout << "cosDist(a,b) = " << cos_ab << "  (expected 0, same direction)\n";
     std::cout << "cosDist(a,c) = " << cos_ac << "  (expected 1, orthogonal)\n";
 
-    std::vector<float> d{3.0f, 4.0f}; // norm 5
+    std::vector<float> d{3.0f, 4.0f};  // norm 5
     Distance::normalize_inplace(d.data(), d.size());
     std::cout << "normalize([3,4]) = "; print_vec(d);
     std::cout << "  (expected [0.6,0.8])\n";
@@ -118,8 +119,10 @@ int main() {
     }
   }
 
-  std::cout << "\nEval harness demo (truth=bruteforce, approx=bruteforce):\n";
+  // ---------------- Eval + HNSW0 demo ----------------
   {
+    std::cout << "\nEval harness demo (truth=bruteforce, approx=HNSW0):\n";
+
     const std::size_t dim = 32;
     const std::size_t N = 5000;
     const std::size_t num_queries = 200;
@@ -127,12 +130,12 @@ int main() {
 
     vecdb::VectorStore store(dim);
 
-    std::mt19937 rng2(123);
-    std::uniform_real_distribution<float> uni2(-1.0f, 1.0f);
+    std::mt19937 rng(123);
+    std::uniform_real_distribution<float> uni(-1.0f, 1.0f);
 
     for (std::size_t i = 0; i < N; ++i) {
       std::vector<float> v(dim);
-      for (std::size_t j = 0; j < dim; ++j) v[j] = uni2(rng2);
+      for (std::size_t j = 0; j < dim; ++j) v[j] = uni(rng);
       store.insert("pt_" + std::to_string(i), v);
     }
 
@@ -140,24 +143,38 @@ int main() {
     queries.reserve(num_queries);
     for (std::size_t qi = 0; qi < num_queries; ++qi) {
       std::vector<float> q(dim);
-      for (std::size_t j = 0; j < dim; ++j) q[j] = uni2(rng2);
+      for (std::size_t j = 0; j < dim; ++j) q[j] = uni(rng);
       queries.push_back(std::move(q));
     }
 
     vecdb::Bruteforce truth_bf(store, vecdb::Metric::L2);
-    vecdb::Bruteforce approx_bf(store, vecdb::Metric::L2);
+
+    vecdb::Hnsw0::Params hp;
+    hp.M = 16;
+    hp.ef_construction = 100;
+    vecdb::Hnsw0 hnsw(store, vecdb::Metric::L2, hp);
+
+    // Build index
+    for (std::size_t i = 0; i < store.size(); ++i) {
+      if (store.is_alive(i)) hnsw.insert(i);
+    }
 
     vecdb::Evaluator eval(store);
 
+    const std::size_t ef_search = 50;  // try 20 / 50 / 100
     auto report = eval.evaluate(
         queries, k,
         [&](const std::vector<float>& q, std::size_t kk) { return truth_bf.search(q, kk); },
-        [&](const std::vector<float>& q, std::size_t kk) { return approx_bf.search(q, kk); }
+        [&](const std::vector<float>& q, std::size_t kk) { return hnsw.search(q, kk, ef_search); }
     );
 
-    std::cout << "N=" << N << " dim=" << dim << " queries=" << num_queries << " k=" << k << "\n";
-    std::cout << "recall@k = " << report.recall_at_k << " (expected 1.0)\n";
+    std::cout << "N=" << N << " dim=" << dim << " queries=" << num_queries
+              << " k=" << k << " ef_search=" << ef_search
+              << " M=" << hp.M << " efC=" << hp.ef_construction << "\n";
+    std::cout << "recall@k = " << report.recall_at_k << "\n";
     std::cout << "avg_latency_ms (approx path) = " << report.avg_latency_ms << "\n";
   }
+
+  std::cout << "\nNext: tune ef_search/M, then add hierarchical HNSW levels and diversity heuristic.\n";
   return 0;
 }

@@ -5,14 +5,10 @@
 
 #include "Distance.h"
 #include "VectorStore.h"
-
+#include "SearchResult.h"
 namespace vecdb {
 
-// One search result entry
-struct SearchResult {
-  std::size_t index;  // internal index in VectorStore
-  float distance;     // lower is closer
-};
+
 
 // Exact topK search baseline (O(N * D) distance eval)
 class Bruteforce {
