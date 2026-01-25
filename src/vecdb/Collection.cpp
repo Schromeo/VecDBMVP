@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <filesystem>
+#include <mutex>
+#include <shared_mutex>
 #include <stdexcept>
 
 #include "Serializer.h"
@@ -34,6 +36,22 @@ Collection::Collection(std::string dir, Options opt)
   if (opt_.dim == 0) throw std::invalid_argument("Collection: dim must be > 0");
 }
 
+Collection::Collection(Collection&& other) noexcept
+    : dir_(std::move(other.dir_)),
+      opt_(other.opt_),
+      store_(std::move(other.store_)),
+      hnsw_(std::move(other.hnsw_)) {}
+
+Collection& Collection::operator=(Collection&& other) noexcept {
+  if (this == &other) return *this;
+  std::scoped_lock lock(mtx_, other.mtx_);
+  dir_ = std::move(other.dir_);
+  opt_ = other.opt_;
+  store_ = std::move(other.store_);
+  hnsw_ = std::move(other.hnsw_);
+  return *this;
+}
+
 Collection Collection::create(const std::string& dir, Options opt) {
   ensure_dir_exists(dir);
   Collection c(dir, opt);
@@ -56,7 +74,28 @@ Collection Collection::open(const std::string& dir) {
   return c;
 }
 
+std::size_t Collection::dim() const {
+  std::shared_lock lock(mtx_);
+  return opt_.dim;
+}
+
+Metric Collection::metric() const {
+  std::shared_lock lock(mtx_);
+  return opt_.metric;
+}
+
+const std::string& Collection::dir() const {
+  std::shared_lock lock(mtx_);
+  return dir_;
+}
+
+std::size_t Collection::size() const {
+  std::shared_lock lock(mtx_);
+  return store_.size();
+}
+
 std::size_t Collection::alive_count() const {
+  std::shared_lock lock(mtx_);
   std::size_t cnt = 0;
   for (std::size_t i = 0; i < store_.size(); ++i) {
     if (store_.is_alive(i)) ++cnt;
@@ -64,12 +103,29 @@ std::size_t Collection::alive_count() const {
   return cnt;
 }
 
+const std::string& Collection::id_at(std::size_t index) const {
+  std::shared_lock lock(mtx_);
+  return store_.id_at(index);
+}
+
+const Metadata& Collection::metadata_at(std::size_t index) const {
+  std::shared_lock lock(mtx_);
+  return store_.metadata_at(index);
+}
+
+const Metadata* Collection::metadata_of(const std::string& id) const {
+  std::shared_lock lock(mtx_);
+  return store_.metadata_ptr(id);
+}
+
 void Collection::set_metric(Metric m) {
+  std::unique_lock lock(mtx_);
   opt_.metric = m;
   if (hnsw_) hnsw_.reset();
 }
 
 void Collection::set_hnsw_params(Hnsw::Params p) {
+  std::unique_lock lock(mtx_);
   opt_.hnsw_params = p;
   if (hnsw_) hnsw_.reset();
 }
@@ -81,6 +137,7 @@ std::size_t Collection::upsert(const std::string& id, const std::vector<float>& 
 std::size_t Collection::upsert(const std::string& id,
                                const std::vector<float>& vec,
                                const Metadata& meta) {
+  std::unique_lock lock(mtx_);
   if (vec.size() != opt_.dim) throw std::invalid_argument("Collection::upsert: vector dim mismatch");
 
   std::size_t idx = store_.upsert(id, vec, meta);
@@ -91,12 +148,24 @@ std::size_t Collection::upsert(const std::string& id,
 }
 
 bool Collection::remove(const std::string& id) {
+  std::unique_lock lock(mtx_);
   bool ok = store_.remove(id);
   if (ok && hnsw_) hnsw_.reset();
   return ok;
 }
 
+bool Collection::contains(const std::string& id) const {
+  std::shared_lock lock(mtx_);
+  return store_.contains(id);
+}
+
+bool Collection::has_index() const {
+  std::shared_lock lock(mtx_);
+  return hnsw_ != nullptr;
+}
+
 void Collection::build_index() {
+  std::unique_lock lock(mtx_);
   hnsw_ = std::make_unique<Hnsw>(store_, opt_.metric, opt_.hnsw_params);
   for (std::size_t i = 0; i < store_.size(); ++i) {
     if (store_.is_alive(i)) hnsw_->insert(i);
@@ -113,6 +182,7 @@ void Collection::ensure_index_ready() const {
 std::vector<SearchResult> Collection::search(const std::vector<float>& query,
                                              std::size_t k,
                                              std::size_t ef_search) const {
+  std::shared_lock lock(mtx_);
   if (query.size() != opt_.dim) throw std::invalid_argument("Collection::search: query dim mismatch");
   ensure_index_ready();
   return hnsw_->search(query, k, ef_search);
@@ -128,8 +198,13 @@ std::vector<SearchResult> Collection::search(const std::vector<float>& query,
                                              std::size_t k,
                                              std::size_t ef_search,
                                              const MetadataFilter& filter) const {
-  if (filter.empty()) return search(query, k, ef_search);
+  std::shared_lock lock(mtx_);
   if (query.size() != opt_.dim) throw std::invalid_argument("Collection::search: query dim mismatch");
+
+  if (filter.empty()) {
+    ensure_index_ready();
+    return hnsw_->search(query, k, ef_search);
+  }
 
   // Filtered search (exact scan for correctness). Can be optimized later.
   std::vector<SearchResult> heap;
@@ -166,6 +241,7 @@ std::vector<SearchResult> Collection::search(const std::vector<float>& query,
 }
 
 void Collection::save() const {
+  std::unique_lock lock(mtx_);
   ensure_dir_exists(dir_);
 
   Serializer::Manifest mf;
@@ -187,6 +263,7 @@ void Collection::save() const {
 }
 
 void Collection::load() {
+  std::unique_lock lock(mtx_);
   Serializer::load_store(dir_, store_);
 
   fs::path hnsw_path = fs::path(dir_) / "hnsw.bin";

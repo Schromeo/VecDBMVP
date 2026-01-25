@@ -28,6 +28,8 @@ persistence.
 - Metadata:
   - per-vector key/value map
   - exact-match filtering
+- Concurrency:
+  - multi-reader/single-writer locking in `Collection`
 
 ---
 
@@ -189,7 +191,7 @@ auto res2 = col.search(q, /*k=*/10, /*ef_search=*/100, f);
 - **Index rebuilds**: current design invalidates HNSW on any mutation for correctness; incremental updates are a planned improvement.
 - **CSV parsing**: supports headers and quoted fields, but not full RFC edge cases (e.g., newlines inside quoted fields).
 - **Metadata filtering**: currently uses exact scan for correctness (no ANN acceleration).
-- **Concurrency**: no locks or transactions yet.
+- **Concurrency**: multi-reader/single-writer locks; no transactions.
 - **Metadata**: simple key=value map only; no schema, no typed values, no index.
 - **Durability**: persistence is simple binary files; no WAL or atomic checkpointing.
 
@@ -224,6 +226,13 @@ Or via CTest:
 cd build
 ctest --output-on-failure
 ```
+
+Verbose output:
+
+```bash
+tests/run_all_tests_verbose.ps1
+# or: ctest -V --test-dir build
+````
 
 ### Coverage
 

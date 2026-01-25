@@ -25,3 +25,7 @@
 - Metadata filtering is implemented as an exact scan that checks key/value pairs
 	before computing distances.
 - This keeps correctness simple; ANN-aware filtering is a future improvement.
+
+### Concurrency
+- `Collection` uses a shared mutex for multi-reader/single-writer access.
+- Reads (search, stats) take shared locks; writes (upsert/build/save/load) take exclusive locks.

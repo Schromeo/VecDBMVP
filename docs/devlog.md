@@ -406,6 +406,27 @@ Persistence demo verified:
 
 ---
 
+## 2026-01-25 — Concurrency (Multi-Reader / Single-Writer)
+
+**Done**
+- Added a shared mutex in `Collection` to guard store/index state.
+- Read operations (search, stats) use shared locks.
+- Write operations (upsert/remove/build/save/load) use exclusive locks.
+- Added a basic concurrent read test to ensure thread-safe search.
+
+**Why**
+- Enables safe parallel queries without data races.
+- Establishes a simple concurrency model without transactions.
+
+**Trade-offs**
+- No transactional isolation or write batching.
+- Filtered search still uses exact scan under a shared lock.
+
+**Next**
+- Consider write batching or read-write lock partitioning.
+
+---
+
 ## Milestone: Tests (Unit + Integration)
 
 Added a standalone test executable `vecdb_tests` (no external frameworks) and a CTest target.

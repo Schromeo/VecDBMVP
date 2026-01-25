@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <memory>
+#include <shared_mutex>
 #include <string>
 #include <vector>
 
@@ -24,32 +25,37 @@ class Collection {
   static Collection create(const std::string& dir, Options opt);
   static Collection open(const std::string& dir);
 
-  std::size_t dim() const { return opt_.dim; }
-  Metric metric() const { return opt_.metric; }
-  const std::string& dir() const { return dir_; }
+  Collection(const Collection&) = delete;
+  Collection& operator=(const Collection&) = delete;
+  Collection(Collection&& other) noexcept;
+  Collection& operator=(Collection&& other) noexcept;
+
+  std::size_t dim() const;
+  Metric metric() const;
+  const std::string& dir() const;
 
   // slots (includes dead)
-  std::size_t size() const { return store_.size(); }
+  std::size_t size() const;
 
   // alive count (computed)
   std::size_t alive_count() const;
 
   // printing / debug helper
-  const std::string& id_at(std::size_t index) const { return store_.id_at(index); }
+  const std::string& id_at(std::size_t index) const;
 
   // metadata helper
-  const Metadata& metadata_at(std::size_t index) const { return store_.metadata_at(index); }
-  const Metadata* metadata_of(const std::string& id) const { return store_.metadata_ptr(id); }
+  const Metadata& metadata_at(std::size_t index) const;
+  const Metadata* metadata_of(const std::string& id) const;
 
   // --- mutation ---
   std::size_t upsert(const std::string& id, const std::vector<float>& vec);
   std::size_t upsert(const std::string& id, const std::vector<float>& vec, const Metadata& meta);
   bool remove(const std::string& id);
-  bool contains(const std::string& id) const { return store_.contains(id); }
+  bool contains(const std::string& id) const;
 
   // --- index ---
   void build_index();
-  bool has_index() const { return hnsw_ != nullptr; }
+  bool has_index() const;
 
   // Allow CLI to override index parameters before build_index()
   void set_metric(Metric m);
@@ -82,6 +88,7 @@ class Collection {
   Options opt_;
   VectorStore store_;
   std::unique_ptr<Hnsw> hnsw_;
+  mutable std::shared_mutex mtx_;
 };
 
 }  // namespace vecdb

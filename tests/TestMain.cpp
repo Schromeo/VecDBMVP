@@ -1,9 +1,12 @@
 #include <cmath>
 #include <cstdlib>
+#include <cstdint>
 #include <filesystem>
 #include <iostream>
 #include <random>
 #include <string>
+#include <atomic>
+#include <thread>
 #include <unordered_set>
 #include <vector>
 #include <algorithm>
@@ -266,6 +269,107 @@ TEST_CASE(test_collection_persistence_roundtrip) {
   REQUIRE_TRUE(res.size() >= 1);
   REQUIRE_EQ(col2.id_at(res[0].index), std::string("u1"));
   REQUIRE_NEAR(res[0].distance, 0.02, 1e-6);
+}
+
+TEST_CASE(test_collection_concurrent_reads) {
+  std::mt19937 rng(123);
+  vecdb::Collection::Options opt;
+  opt.dim = 8;
+  opt.metric = vecdb::Metric::L2;
+  opt.hnsw_params.M = 16;
+  opt.hnsw_params.M0 = 32;
+  opt.hnsw_params.ef_construction = 100;
+  opt.hnsw_params.use_diversity = true;
+  opt.hnsw_params.seed = 123;
+  opt.hnsw_params.level_mult = 1.0f;
+
+  auto dir = make_temp_dir("concurrent_reads");
+  auto col = vecdb::Collection::create(dir.string(), opt);
+
+  for (std::size_t i = 0; i < 2000; ++i) {
+    col.upsert("id_" + std::to_string(i), rand_vec(rng, opt.dim));
+  }
+  col.build_index();
+
+  std::atomic<bool> ok{true};
+  std::atomic<std::uint32_t> seed{1234};
+  auto worker = [&]() {
+    std::mt19937 lrng(seed.fetch_add(1));
+    for (int i = 0; i < 50; ++i) {
+      auto q = rand_vec(lrng, opt.dim);
+      auto res = col.search(q, 5, 50);
+      if (res.empty()) {
+        ok = false;
+        return;
+      }
+    }
+  };
+
+  std::thread t1(worker);
+  std::thread t2(worker);
+  std::thread t3(worker);
+  std::thread t4(worker);
+
+  t1.join();
+  t2.join();
+  t3.join();
+  t4.join();
+
+  REQUIRE_TRUE(ok.load());
+}
+
+TEST_CASE(test_collection_concurrent_read_write) {
+  std::mt19937 rng(123);
+  vecdb::Collection::Options opt;
+  opt.dim = 8;
+  opt.metric = vecdb::Metric::L2;
+
+  auto dir = make_temp_dir("concurrent_read_write");
+  auto col = vecdb::Collection::create(dir.string(), opt);
+
+  // Seed data with metadata group=a
+  for (std::size_t i = 0; i < 500; ++i) {
+    vecdb::Metadata meta;
+    meta["group"] = "a";
+    col.upsert("id_" + std::to_string(i), rand_vec(rng, opt.dim), meta);
+  }
+
+  vecdb::Collection::MetadataFilter filter;
+  filter.key = "group";
+  filter.value = "a";
+
+  std::atomic<bool> ok{true};
+  std::atomic<std::uint32_t> seed{5678};
+
+  auto reader = [&]() {
+    std::mt19937 lrng(seed.fetch_add(1));
+    for (int i = 0; i < 50; ++i) {
+      auto q = rand_vec(lrng, opt.dim);
+      auto res = col.search(q, 5, 50, filter);
+      if (res.empty()) {
+        ok = false;
+        return;
+      }
+    }
+  };
+
+  auto writer = [&]() {
+    for (int i = 0; i < 100; ++i) {
+      vecdb::Metadata meta;
+      meta["group"] = "a";
+      col.upsert("new_" + std::to_string(i), rand_vec(rng, opt.dim), meta);
+    }
+  };
+
+  std::thread tw(writer);
+  std::thread tr1(reader);
+  std::thread tr2(reader);
+
+  tw.join();
+  tr1.join();
+  tr2.join();
+
+  REQUIRE_TRUE(ok.load());
 }
 
 // ---------------- Runner ----------------
