@@ -13,6 +13,7 @@
 #include "vecdb/Bruteforce.h"
 #include "vecdb/Hnsw.h"
 #include "vecdb/Collection.h"
+#include "vecdb/Metadata.h"
 
 // ---------------- Minimal test macros ----------------
 static int g_failures = 0;
@@ -240,7 +241,11 @@ TEST_CASE(test_collection_persistence_roundtrip) {
 
   auto col = vecdb::Collection::create(dir.string(), opt);
 
-  col.upsert("u1", {1,0,0,0});
+  vecdb::Metadata meta_u1;
+  meta_u1["type"] = "alpha";
+  meta_u1["lang"] = "en";
+
+  col.upsert("u1", {1,0,0,0}, meta_u1);
   col.upsert("u2", {0,1,0,0});
   col.upsert("u3", {0,0,1,0});
   col.upsert("u4", {0,0,0,1});
@@ -250,6 +255,11 @@ TEST_CASE(test_collection_persistence_roundtrip) {
 
   auto col2 = vecdb::Collection::open(dir.string());
   REQUIRE_TRUE(col2.has_index());
+
+  const auto* meta = col2.metadata_of("u1");
+  REQUIRE_TRUE(meta != nullptr);
+  REQUIRE_EQ(meta->at("type"), std::string("alpha"));
+  REQUIRE_EQ(meta->at("lang"), std::string("en"));
 
   std::vector<float> q{0.9f, 0.1f, 0.f, 0.f};
   auto res = col2.search(q, /*k=*/3, /*ef_search=*/50);

@@ -3,6 +3,10 @@ build/
 out/
 cmake-build-*/
 
+# runtime data
+data/
+Testing/
+
 # CMake
 CMakeFiles/
 CMakeCache.txt

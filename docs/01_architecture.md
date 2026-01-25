@@ -6,6 +6,7 @@
 - Stores embeddings in a contiguous `vector<float>` layout.
 - Maintains `id -> index` and `index -> id`.
 - Uses tombstone (`alive[index]`) for logical deletion.
+- Stores optional metadata per vector (string key/value map).
 
 ### Distance (metric abstraction)
 - Unified `distance(metric, a, b)` API.
@@ -19,3 +20,8 @@
 
 ### Baseline (BruteForce)
 - O(N*D) exact topK for correctness validation and recall@K.
+
+### Filtering (Metadata)
+- Metadata filtering is implemented as an exact scan that checks key/value pairs
+	before computing distances.
+- This keeps correctness simple; ANN-aware filtering is a future improvement.

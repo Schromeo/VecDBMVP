@@ -10,6 +10,8 @@
 #include <cstdint>
 #include <cstring>
 
+#include "Metadata.h"
+
 namespace vecdb {
 
 namespace fs = std::filesystem;
@@ -248,12 +250,24 @@ void Serializer::save_store(const std::string& dir, const VectorStore& store) {
       out << store.id_at(i) << "\n";
     }
   }
+
+  // meta.txt
+  {
+    fs::path mp = pjoin(dir, "meta.txt");
+    std::ofstream out(mp, std::ios::binary);
+    if (!out) throw std::runtime_error("Serializer: cannot open meta.txt for write");
+
+    for (std::size_t i = 0; i < N; ++i) {
+      out << metadata::encode(store.metadata_at(i)) << "\n";
+    }
+  }
 }
 
 void Serializer::load_store(const std::string& dir, VectorStore& store) {
   fs::path vp = pjoin(dir, "vectors.bin");
   fs::path ap = pjoin(dir, "alive.bin");
   fs::path ip = pjoin(dir, "ids.txt");
+  fs::path mp = pjoin(dir, "meta.txt");
 
   std::size_t N = 0;
   std::size_t dim = 0;
@@ -310,7 +324,28 @@ void Serializer::load_store(const std::string& dir, VectorStore& store) {
     }
   }
 
-  store.load_from_disk(N, vectors, alive, ids);
+  // meta.txt (optional for backward compatibility)
+  std::vector<Metadata> meta;
+  if (fs::exists(mp)) {
+    std::ifstream in(mp, std::ios::binary);
+    if (!in) throw std::runtime_error("Serializer: cannot open meta.txt for read");
+
+    meta.resize(N);
+    std::string line;
+    for (std::size_t i = 0; i < N; ++i) {
+      if (!std::getline(in, line)) line.clear();
+      if (!line.empty() && line.back() == '\r') line.pop_back();
+      std::string err;
+      if (!metadata::decode(line, meta[i], err)) {
+        throw std::runtime_error("Serializer: meta.txt parse error at line " +
+                                 std::to_string(i + 1) + ": " + err);
+      }
+    }
+  } else {
+    meta.resize(N);
+  }
+
+  store.load_from_disk(N, vectors, alive, ids, meta);
 }
 
 // ---------------- HNSW ----------------

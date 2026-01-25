@@ -5,8 +5,10 @@ Build a minimal viable vector database supporting insert + similarity search + p
 
 ## MVP Scope
 - VectorStore: contiguous float storage + id->index mapping + tombstone
+- Metadata: optional key/value map per vector (string-only)
 - Distance: L2^2 and cosine distance (with optional normalization)
 - Search: brute-force baseline + HNSW (incremental)
+- Filtered search: exact scan with metadata filter (no ANN acceleration)
 
 ## Non-Goals (for MVP)
 - High concurrency / transactions

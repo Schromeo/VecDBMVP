@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "Distance.h"
+#include "Metadata.h"
 #include "SearchResult.h"
 #include "VectorStore.h"
 #include "Hnsw.h"
@@ -30,21 +31,46 @@ class Collection {
   // slots (includes dead)
   std::size_t size() const { return store_.size(); }
 
+  // alive count (computed)
+  std::size_t alive_count() const;
+
   // printing / debug helper
   const std::string& id_at(std::size_t index) const { return store_.id_at(index); }
 
+  // metadata helper
+  const Metadata& metadata_at(std::size_t index) const { return store_.metadata_at(index); }
+  const Metadata* metadata_of(const std::string& id) const { return store_.metadata_ptr(id); }
+
+  // --- mutation ---
   std::size_t upsert(const std::string& id, const std::vector<float>& vec);
+  std::size_t upsert(const std::string& id, const std::vector<float>& vec, const Metadata& meta);
   bool remove(const std::string& id);
   bool contains(const std::string& id) const { return store_.contains(id); }
 
+  // --- index ---
   void build_index();
+  bool has_index() const { return hnsw_ != nullptr; }
+
+  // Allow CLI to override index parameters before build_index()
+  void set_metric(Metric m);
+  void set_hnsw_params(Hnsw::Params p);
+
+  struct MetadataFilter {
+    std::string key;
+    std::string value;
+    bool empty() const { return key.empty(); }
+  };
 
   std::vector<SearchResult> search(const std::vector<float>& query,
                                   std::size_t k,
                                   std::size_t ef_search) const;
 
-  bool has_index() const { return hnsw_ != nullptr; }
+  std::vector<SearchResult> search(const std::vector<float>& query,
+                                   std::size_t k,
+                                   std::size_t ef_search,
+                                   const MetadataFilter& filter) const;
 
+  // --- persistence ---
   void save() const;
   void load();
 

@@ -258,6 +258,30 @@ before correctness is validated against brute-force results.
 - Kept neighbor diversity heuristic as a configurable option.
 - Used per-node adjacency storage to avoid huge per-layer vector overhead at large N.
 
+---
+
+## 2026-01-25 — Metadata Support + Robust CSV
+
+**Done**
+- Added per-vector metadata (`key=value` map) to `VectorStore` and `Collection`.
+- Persisted metadata to disk (`meta.txt`) alongside vectors and ids.
+- Added metadata-aware filtering (exact scan for correctness).
+- Improved CSV parsing: headers, quoted fields, optional metadata column.
+- Extended CLI: `--meta` and `--filter`.
+- Updated README + docs to reflect metadata features.
+
+**Why**
+- Real-world vector DB usage requires filtering and richer context per embedding.
+- Keeping a simple text format avoids dependencies and preserves transparency.
+
+**Trade-offs**
+- Filtered search currently bypasses HNSW and performs exact scan.
+- Metadata format is a simple string map (no schema, no type system).
+
+**Next**
+- Consider ANN-aware filtering or pre-filter candidate lists.
+- Add schema/type support for metadata values if needed.
+
 **Why**
 - Layer-0-only ANN degrades at large N.
 - Hierarchical navigation enables coarse-to-fine routing, improving recall/latency trade-off.

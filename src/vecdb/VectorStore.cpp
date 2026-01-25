@@ -42,6 +42,21 @@ const std::string& VectorStore::id_at(std::size_t index) const {
   return ids_[index];
 }
 
+const Metadata& VectorStore::metadata_at(std::size_t index) const {
+  if (index >= meta_.size()) {
+    throw std::out_of_range("VectorStore::metadata_at: index out of range");
+  }
+  return meta_[index];
+}
+
+const Metadata* VectorStore::metadata_ptr(const std::string& id) const {
+  auto it = id_to_index_.find(id);
+  if (it == id_to_index_.end()) return nullptr;
+  std::size_t idx = it->second;
+  if (!is_alive(idx)) return nullptr;
+  return &meta_[idx];
+}
+
 const float* VectorStore::get_ptr(std::size_t index) const {
   if (index >= size()) return nullptr;
   if (!is_alive(index)) return nullptr;
@@ -77,7 +92,9 @@ bool VectorStore::try_get_index(const std::string& id, std::size_t& out_index) c
   return true;
 }
 
-std::size_t VectorStore::insert(const std::string& id, const std::vector<float>& vec) {
+std::size_t VectorStore::insert(const std::string& id,
+                                const std::vector<float>& vec,
+                                const Metadata& meta) {
   validate_dim_(vec);
   if (id.empty()) throw std::invalid_argument("VectorStore::insert: id cannot be empty");
 
@@ -90,6 +107,7 @@ std::size_t VectorStore::insert(const std::string& id, const std::vector<float>&
     // existed but dead -> revive at same index
     std::copy(vec.begin(), vec.end(), ptr_at_(idx));
     alive_[idx] = 1;
+    meta_[idx] = meta;
     // keep ids_[idx] as id
     return idx;
   }
@@ -97,6 +115,7 @@ std::size_t VectorStore::insert(const std::string& id, const std::vector<float>&
   // Append new slot
   std::size_t idx = ids_.size();
   ids_.push_back(id);
+  meta_.push_back(meta);
   alive_.push_back(1);
 
   data_.resize(ids_.size() * dim_);
@@ -106,7 +125,9 @@ std::size_t VectorStore::insert(const std::string& id, const std::vector<float>&
   return idx;
 }
 
-std::size_t VectorStore::upsert(const std::string& id, const std::vector<float>& vec) {
+std::size_t VectorStore::upsert(const std::string& id,
+                                const std::vector<float>& vec,
+                                const Metadata& meta) {
   validate_dim_(vec);
   if (id.empty()) throw std::invalid_argument("VectorStore::upsert: id cannot be empty");
 
@@ -117,12 +138,14 @@ std::size_t VectorStore::upsert(const std::string& id, const std::vector<float>&
     std::copy(vec.begin(), vec.end(), ptr_at_(idx));
     alive_[idx] = 1;
     if (ids_[idx].empty()) ids_[idx] = id;
+    meta_[idx] = meta;
     return idx;
   }
 
   // new id -> append
   std::size_t idx = ids_.size();
   ids_.push_back(id);
+  meta_.push_back(meta);
   alive_.push_back(1);
 
   data_.resize(ids_.size() * dim_);
@@ -152,13 +175,15 @@ void VectorStore::clear() {
   data_.clear();
   alive_.clear();
   ids_.clear();
+  meta_.clear();
   id_to_index_.clear();
 }
 
 void VectorStore::load_from_disk(std::size_t N,
                                  const std::vector<float>& vectors,
                                  const std::vector<std::uint8_t>& alive,
-                                 const std::vector<std::string>& ids) {
+                                 const std::vector<std::string>& ids,
+                                 const std::vector<Metadata>& meta) {
   if (N == 0) {
     clear();
     return;
@@ -169,6 +194,9 @@ void VectorStore::load_from_disk(std::size_t N,
   if (ids.size() != N) {
     throw std::runtime_error("VectorStore::load_from_disk: ids size mismatch");
   }
+  if (meta.size() != N) {
+    throw std::runtime_error("VectorStore::load_from_disk: meta size mismatch");
+  }
   if (vectors.size() != N * dim_) {
     throw std::runtime_error("VectorStore::load_from_disk: vectors size mismatch");
   }
@@ -176,6 +204,7 @@ void VectorStore::load_from_disk(std::size_t N,
   ids_ = ids;
   alive_ = alive;
   data_ = vectors;
+  meta_ = meta;
 
   id_to_index_.clear();
   id_to_index_.reserve(N);

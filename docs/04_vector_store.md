@@ -14,6 +14,7 @@ VectorStore is responsible for:
 - Mapping external IDs to internal indices
 - Supporting logical deletion
 - Providing fast, cache-friendly access for distance computation
+- Storing optional per-vector metadata (string key/value)
 
 VectorStore does **not**:
 - Perform similarity search
@@ -38,6 +39,12 @@ This separation allows:
 - Contiguous memory layout
 - Compact graph representations
 - Stable references even when vectors are deleted
+
+### Metadata
+
+- Optional `Metadata` per vector (`unordered_map<string,string>`)
+- Stored alongside vectors and persisted to disk
+- Used for exact-match filtering at query time
 
 ---
 
@@ -149,6 +156,10 @@ Checks whether an ID exists and is alive.
 ### No concurrency
 - Avoids race conditions during early development
 - Future extension: multi-reader/single-writer locking
+
+### Metadata filtering
+- Current implementation performs exact scan when filters are used
+- Fast ANN + filtering is future work
 
 ---
 

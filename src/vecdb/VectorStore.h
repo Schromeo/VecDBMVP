@@ -6,6 +6,8 @@
 #include <unordered_map>
 #include <vector>
 
+#include "Metadata.h"
+
 namespace vecdb {
 
 // VectorStore: contiguous in-memory storage for fixed-dimension vectors.
@@ -33,6 +35,13 @@ class VectorStore {
   // Precondition: index < size()
   const std::string& id_at(std::size_t index) const;
 
+  // Return metadata for a slot (may be empty for dead slots).
+  // Precondition: index < size()
+  const Metadata& metadata_at(std::size_t index) const;
+
+  // Get metadata by id (alive only). Returns nullptr if not found or dead.
+  const Metadata* metadata_ptr(const std::string& id) const;
+
   // Get pointer to vector data by index.
   // Returns nullptr if index out of range OR slot is dead.
   const float* get_ptr(std::size_t index) const;
@@ -47,13 +56,17 @@ class VectorStore {
   // - If id already exists and alive: throws.
   // - If id exists but is dead: revives at same index (treated like upsert).
   // Returns the index used.
-  std::size_t insert(const std::string& id, const std::vector<float>& vec);
+  std::size_t insert(const std::string& id,
+                     const std::vector<float>& vec,
+                     const Metadata& meta = Metadata{});
 
   // Upsert (insert or overwrite):
   // - If id exists and alive: overwrite vector in-place, return its index.
   // - If id exists but dead: revive at same index, overwrite vector, return index.
   // - Else: append a new slot, return new index.
-  std::size_t upsert(const std::string& id, const std::vector<float>& vec);
+  std::size_t upsert(const std::string& id,
+                     const std::vector<float>& vec,
+                     const Metadata& meta = Metadata{});
 
   // Remove by id:
   // - If id not found or already dead: returns false.
@@ -74,12 +87,14 @@ class VectorStore {
   // - ids[i] is the id for slot i (may be empty if dead)
   // - alive[i] is 1/0 per slot
   // - vectors is a flat array of length N*dim in row-major order
+  // - meta[i] is metadata for slot i (may be empty)
   //
   // After this, id->index mapping is rebuilt for alive slots.
   void load_from_disk(std::size_t N,
                       const std::vector<float>& vectors,
                       const std::vector<std::uint8_t>& alive,
-                      const std::vector<std::string>& ids);
+                      const std::vector<std::string>& ids,
+                      const std::vector<Metadata>& meta);
 
  private:
   void validate_dim_(const std::vector<float>& vec) const;
@@ -97,6 +112,9 @@ class VectorStore {
 
   // Index -> id (empty string allowed for dead slot).
   std::vector<std::string> ids_;
+
+  // Index -> metadata (empty for dead slot).
+  std::vector<Metadata> meta_;
 
   // id -> index (only for alive ids)
   std::unordered_map<std::string, std::size_t> id_to_index_;

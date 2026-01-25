@@ -1,5 +1,6 @@
 #include "Collection.h"
 
+#include <algorithm>
 #include <filesystem>
 #include <stdexcept>
 
@@ -55,10 +56,34 @@ Collection Collection::open(const std::string& dir) {
   return c;
 }
 
+std::size_t Collection::alive_count() const {
+  std::size_t cnt = 0;
+  for (std::size_t i = 0; i < store_.size(); ++i) {
+    if (store_.is_alive(i)) ++cnt;
+  }
+  return cnt;
+}
+
+void Collection::set_metric(Metric m) {
+  opt_.metric = m;
+  if (hnsw_) hnsw_.reset();
+}
+
+void Collection::set_hnsw_params(Hnsw::Params p) {
+  opt_.hnsw_params = p;
+  if (hnsw_) hnsw_.reset();
+}
+
 std::size_t Collection::upsert(const std::string& id, const std::vector<float>& vec) {
+  return upsert(id, vec, Metadata{});
+}
+
+std::size_t Collection::upsert(const std::string& id,
+                               const std::vector<float>& vec,
+                               const Metadata& meta) {
   if (vec.size() != opt_.dim) throw std::invalid_argument("Collection::upsert: vector dim mismatch");
 
-  std::size_t idx = store_.upsert(id, vec);
+  std::size_t idx = store_.upsert(id, vec, meta);
 
   // v1 correctness-first: any mutation invalidates index (rebuild later).
   if (hnsw_) hnsw_.reset();
@@ -91,6 +116,53 @@ std::vector<SearchResult> Collection::search(const std::vector<float>& query,
   if (query.size() != opt_.dim) throw std::invalid_argument("Collection::search: query dim mismatch");
   ensure_index_ready();
   return hnsw_->search(query, k, ef_search);
+}
+
+static bool metadata_matches(const Metadata& meta, const Collection::MetadataFilter& filter) {
+  if (filter.empty()) return true;
+  auto it = meta.find(filter.key);
+  return it != meta.end() && it->second == filter.value;
+}
+
+std::vector<SearchResult> Collection::search(const std::vector<float>& query,
+                                             std::size_t k,
+                                             std::size_t ef_search,
+                                             const MetadataFilter& filter) const {
+  if (filter.empty()) return search(query, k, ef_search);
+  if (query.size() != opt_.dim) throw std::invalid_argument("Collection::search: query dim mismatch");
+
+  // Filtered search (exact scan for correctness). Can be optimized later.
+  std::vector<SearchResult> heap;
+  heap.reserve(k + 1);
+
+  for (std::size_t i = 0; i < store_.size(); ++i) {
+    if (!store_.is_alive(i)) continue;
+    if (!metadata_matches(store_.metadata_at(i), filter)) continue;
+
+    const float* p = store_.get_ptr(i);
+    if (!p) continue;
+
+    float d = Distance::distance(opt_.metric, query.data(), p, opt_.dim);
+
+    if (heap.size() < k) {
+      heap.push_back({i, d});
+      if (heap.size() == k) {
+        std::make_heap(heap.begin(), heap.end(),
+                       [](const auto& a, const auto& b) { return a.distance < b.distance; });
+      }
+    } else if (d < heap.front().distance) {
+      std::pop_heap(heap.begin(), heap.end(),
+                    [](const auto& a, const auto& b) { return a.distance < b.distance; });
+      heap.back() = {i, d};
+      std::push_heap(heap.begin(), heap.end(),
+                     [](const auto& a, const auto& b) { return a.distance < b.distance; });
+    }
+  }
+
+  if (heap.empty()) return heap;
+  std::sort(heap.begin(), heap.end(),
+            [](const auto& a, const auto& b) { return a.distance < b.distance; });
+  return heap;
 }
 
 void Collection::save() const {

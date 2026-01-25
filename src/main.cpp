@@ -1,16 +1,20 @@
 #include <algorithm>
 #include <chrono>
+#include <cstdint>
 #include <filesystem>
 #include <iomanip>
 #include <iostream>
 #include <random>
+#include <stdexcept>
 #include <string>
 #include <unordered_set>
 #include <vector>
 
 #include "vecdb/Collection.h"
+#include "vecdb/Csv.h"
 #include "vecdb/Distance.h"
 #include "vecdb/Hnsw.h"
+#include "vecdb/Metadata.h"
 #include "vecdb/VectorStore.h"
 
 using Clock = std::chrono::high_resolution_clock;
@@ -43,6 +47,151 @@ static std::vector<float> rand_vec(std::mt19937& rng, std::size_t dim) {
   for (std::size_t i = 0; i < dim; ++i) v[i] = dist(rng);
   return v;
 }
+
+// ---------------- Simple arg parsing ----------------
+struct Args {
+  std::vector<std::string> pos;
+  std::vector<std::pair<std::string, std::string>> kv; // --key value
+  std::unordered_set<std::string> flags;               // --flag
+};
+
+static Args parse_args(int argc, char** argv) {
+  Args a;
+  for (int i = 1; i < argc; ++i) {
+    std::string s(argv[i]);
+    if (s.rfind("--", 0) == 0) {
+      // flag or key-value
+      if (i + 1 < argc) {
+        std::string next(argv[i + 1]);
+        if (next.rfind("--", 0) != 0) {
+          a.kv.push_back({s, next});
+          ++i;
+          continue;
+        }
+      }
+      a.flags.insert(s);
+    } else {
+      a.pos.push_back(s);
+    }
+  }
+  return a;
+}
+
+static bool has_flag(const Args& a, const std::string& k) {
+  return a.flags.count(k) > 0;
+}
+
+static bool get_kv(const Args& a, const std::string& k, std::string& out) {
+  for (auto& p : a.kv) {
+    if (p.first == k) { out = p.second; return true; }
+  }
+  return false;
+}
+
+static std::size_t get_size_or(const Args& a, const std::string& k, std::size_t def) {
+  std::string v;
+  if (!get_kv(a, k, v)) return def;
+  return static_cast<std::size_t>(std::stoull(v));
+}
+
+static int get_int_or(const Args& a, const std::string& k, int def) {
+  std::string v;
+  if (!get_kv(a, k, v)) return def;
+  return std::stoi(v);
+}
+
+static float get_float_or(const Args& a, const std::string& k, float def) {
+  std::string v;
+  if (!get_kv(a, k, v)) return def;
+  return std::stof(v);
+}
+
+static vecdb::Metric parse_metric(const std::string& s) {
+  if (s == "l2" || s == "L2") return vecdb::Metric::L2;
+  if (s == "cosine" || s == "COSINE") return vecdb::Metric::COSINE;
+  throw std::invalid_argument("unknown metric: " + s + " (use l2|cosine)");
+}
+
+static bool parse_metadata_kv(const std::string& s, vecdb::Metadata& out, std::string& err) {
+  return vecdb::metadata::decode(s, out, err);
+}
+
+static bool parse_filter(const Args& a, vecdb::Collection::MetadataFilter& out, std::string& err) {
+  std::string s;
+  if (!get_kv(a, "--filter", s)) return true;
+
+  auto pos = s.find('=');
+  if (pos == std::string::npos || pos == 0 || pos + 1 >= s.size()) {
+    err = "filter must be in form key=value";
+    return false;
+  }
+  out.key = s.substr(0, pos);
+  out.value = s.substr(pos + 1);
+  return true;
+}
+
+static void print_help() {
+  std::cout <<
+R"(VecDB MVP CLI
+
+USAGE:
+  vecdb <command> [options]
+
+COMMANDS:
+  create   Create a new collection (writes manifest/store)
+  load     Load vectors from CSV into an existing collection
+  build    Build HNSW index and persist it
+  search   Search topK for a query (or query CSV)
+  stats    Print collection info
+  demo     Run built-in demo/benchmark/persistence
+
+CSV FORMATS:
+  vectors.csv: id,f1,f2,...,f_dim
+  queries.csv: f1,f2,...,f_dim   OR   id,f1,...,f_dim
+
+COMMON OPTIONS:
+  --dir <path>          Collection directory (e.g., data/mycol)
+  --metric l2|cosine    Metric (default l2)
+  --header              CSV has a header row (skip first row)
+  --has-id              CSV first column is id (even if numeric)
+  --meta                CSV has a trailing metadata column
+
+create OPTIONS:
+  --dim <n>             Vector dimension (required)
+  --M <n>               HNSW M (default 16)
+  --M0 <n>              HNSW M0 (default 32)
+  --efC <n>             HNSW ef_construction (default 100)
+  --diversity 0|1       Neighbor diversity heuristic (default 1)
+  --seed <n>            RNG seed (default 123)
+  --level_mult <f>      Level multiplier (default 1.0)
+
+load OPTIONS:
+  --csv <file>          vectors.csv path (required)
+  --build 0|1           build index after load (default 0)
+  --meta                vectors.csv has trailing metadata column (key=value;key2=value2)
+
+build OPTIONS:
+  (same HNSW params as create; overrides manifest params before building)
+
+search OPTIONS:
+  --query <csvline>     Single query line: f1,f2,...,f_dim  (no id)
+  --query_csv <file>    Query CSV file (multiple queries)
+  --k <n>               TopK (default 10)
+  --ef <n>              ef_search (default 50)
+  --limit <n>           For query_csv, limit number of queries (default all)
+  --filter k=v          Filter by metadata key/value (exact match)
+
+EXAMPLES:
+  vecdb create --dir data/demo --dim 768 --metric l2
+  vecdb load   --dir data/demo --csv data/vectors.csv
+  vecdb build  --dir data/demo --M 16 --M0 32 --efC 100 --diversity 1
+  vecdb search --dir data/demo --query "0.1,0.2,0.3,..." --k 10 --ef 100
+  vecdb search --dir data/demo --query_csv data/queries.csv --k 10 --ef 100
+
+)";
+}
+
+// ---------------- Demo / benchmark (kept) ----------------
 
 static std::vector<std::pair<std::size_t, float>> bruteforce_topk(
     const vecdb::VectorStore& store,
@@ -85,7 +234,7 @@ static double recall_at_k(const std::vector<std::vector<std::size_t>>& truth,
 static void run_hnsw_benchmark() {
   std::mt19937 rng(123);
 
-  const std::size_t N = 200000;     // 先别用 500k，避免你本机卡到飞起；你想冲再改大
+  const std::size_t N = 200000;
   const std::size_t dim = 32;
   const std::size_t queries = 200;
   const std::size_t k = 10;
@@ -206,9 +355,8 @@ static void persistence_demo() {
   }
 }
 
-int main() {
+static int run_demo() {
   std::cout << std::fixed << std::setprecision(6);
-
   std::cout << "VecDB MVP starting...\n";
   std::cout << "Platform: " << platform_name() << "\n";
 
@@ -260,43 +408,310 @@ int main() {
     if (p) std::cout << "  first=" << p[0];
     std::cout << "\n";
 
-    bool rm = store.remove("u1");
-    std::cout << "remove(u1) = " << (rm ? "true" : "false") << " (expected true)\n";
+    bool ok = store.remove("u1");
+    std::cout << "remove(u1) = " << (ok ? "true" : "false") << " (expected true)\n";
     std::cout << "contains(u1) = " << (store.contains("u1") ? "true" : "false") << " (expected false)\n";
-
-    const float* p2 = store.get_ptr(i1);
-    std::cout << "get_ptr(u1_index) = " << (p2 ? "not-null" : "nullptr") << " (expected nullptr)\n";
+    std::cout << "get_ptr(u1_index) = " << (store.get_ptr(i1) ? "non-null" : "nullptr") << " (expected nullptr)\n";
   }
 
-  // Bruteforce demo
-  {
-    std::cout << "\nBruteforce demo:\n";
-    std::mt19937 rng(123);
-    const std::size_t N = 100;
-    const std::size_t dim = 4;
-
-    vecdb::VectorStore store(dim);
-    for (std::size_t i = 0; i < N; ++i) store.upsert("id_" + std::to_string(i), rand_vec(rng, dim));
-
-    std::vector<float> q = rand_vec(rng, dim);
-    std::cout << "Query q=";
-    print_vec(q);
-    std::cout << "\nTop5 (L2^2):\n";
-
-    auto top5 = bruteforce_topk(store, vecdb::Metric::L2, q, 5);
-    for (auto& it : top5) {
-      std::cout << "  index=" << it.first
-                << " id=id_" << it.first
-                << " dist=" << it.second << "\n";
-    }
-  }
-
-  // Benchmark (optional)
   run_hnsw_benchmark();
-
-  // Persistence demo (must-have)
   persistence_demo();
-
-  std::cout << "\nNext: add unit/integration tests + README design doc updates.\n";
   return 0;
+}
+
+// ---------------- CLI commands ----------------
+
+static bool manifest_exists(const std::string& dir) {
+  namespace fs = std::filesystem;
+  std::error_code ec;
+  fs::path p = fs::path(dir) / "manifest.json";
+  return fs::exists(p, ec) && fs::is_regular_file(p, ec);
+}
+
+static vecdb::Hnsw::Params read_hnsw_params_from_args(const Args& a) {
+  vecdb::Hnsw::Params p;
+  p.M = static_cast<std::size_t>(get_size_or(a, "--M", 16));
+  p.M0 = static_cast<std::size_t>(get_size_or(a, "--M0", 32));
+  p.ef_construction = static_cast<std::size_t>(get_size_or(a, "--efC", 100));
+  p.use_diversity = (get_int_or(a, "--diversity", 1) != 0);
+  p.seed = static_cast<std::uint32_t>(get_size_or(a, "--seed", 123));
+  p.level_mult = get_float_or(a, "--level_mult", 1.0f);
+  return p;
+}
+
+static int cmd_create(const Args& a) {
+  std::string dir;
+  if (!get_kv(a, "--dir", dir)) {
+    std::cerr << "create: missing --dir\n";
+    return 2;
+  }
+  if (manifest_exists(dir)) {
+    std::cerr << "create: manifest already exists in dir: " << dir << "\n";
+    return 2;
+  }
+
+  std::size_t dim = get_size_or(a, "--dim", 0);
+  if (dim == 0) {
+    std::cerr << "create: missing --dim\n";
+    return 2;
+  }
+
+  std::string metric_s = "l2";
+  get_kv(a, "--metric", metric_s);
+
+  vecdb::Collection::Options opt;
+  opt.dim = dim;
+  opt.metric = parse_metric(metric_s);
+  opt.hnsw_params = read_hnsw_params_from_args(a);
+
+  auto col = vecdb::Collection::create(dir, opt);
+  std::cout << "Created collection at: " << col.dir()
+            << " dim=" << col.dim()
+            << " metric=" << metric_s
+            << "\n";
+  return 0;
+}
+
+static int cmd_load(const Args& a) {
+  std::string dir;
+  std::string csv_path;
+  if (!get_kv(a, "--dir", dir)) { std::cerr << "load: missing --dir\n"; return 2; }
+  if (!get_kv(a, "--csv", csv_path)) { std::cerr << "load: missing --csv\n"; return 2; }
+  if (!manifest_exists(dir)) { std::cerr << "load: collection not found (manifest.json missing): " << dir << "\n"; return 2; }
+
+  auto col = vecdb::Collection::open(dir);
+
+  vecdb::csv::Options opt;
+  opt.has_header = has_flag(a, "--header");
+  opt.has_id = true;       // load requires id as first column
+  opt.infer_id = false;
+  opt.allow_metadata = has_flag(a, "--meta");
+
+  std::size_t inserted = 0;
+  std::string err;
+  bool ok = vecdb::csv::for_each_row(csv_path, col.dim(),
+    [&](const vecdb::csv::Row& row) -> bool {
+      if (!row.has_id || row.id.empty()) {
+        std::cerr << "load: vectors.csv must contain id as first column: id,f1,...,f_dim\n";
+        return false;
+      }
+      vecdb::Metadata meta;
+      if (opt.allow_metadata) {
+        if (!row.has_metadata) {
+          std::cerr << "load: --meta enabled but row has no metadata column\n";
+          return false;
+        }
+        std::string merr;
+        if (!parse_metadata_kv(row.metadata_raw, meta, merr)) {
+          std::cerr << "load: metadata parse error: " << merr << "\n";
+          return false;
+        }
+      }
+      col.upsert(row.id, row.vec, meta);
+      ++inserted;
+      return true;
+    }, err, opt);
+
+  if (!ok) {
+    std::cerr << "load failed: " << err << "\n";
+    return 2;
+  }
+
+  // After loading, index is invalidated; save store + manifest (and remove hnsw.bin if existed).
+  col.save();
+  std::cout << "Loaded vectors: " << inserted << " into " << dir << "\n";
+
+  int build = get_int_or(a, "--build", 0);
+  if (build != 0) {
+    col.build_index();
+    col.save();
+    std::cout << "Index built and saved.\n";
+  }
+  return 0;
+}
+
+static int cmd_build(const Args& a) {
+  std::string dir;
+  if (!get_kv(a, "--dir", dir)) { std::cerr << "build: missing --dir\n"; return 2; }
+  if (!manifest_exists(dir)) { std::cerr << "build: collection not found (manifest.json missing): " << dir << "\n"; return 2; }
+
+  auto col = vecdb::Collection::open(dir);
+
+  // Optional overrides:
+  std::string metric_s;
+  if (get_kv(a, "--metric", metric_s)) {
+    col.set_metric(parse_metric(metric_s));
+  }
+  // if any HNSW-related option present, override params
+  bool has_any_param =
+      get_kv(a, "--M", metric_s) || get_kv(a, "--M0", metric_s) ||
+      get_kv(a, "--efC", metric_s) || get_kv(a, "--diversity", metric_s) ||
+      get_kv(a, "--seed", metric_s) || get_kv(a, "--level_mult", metric_s);
+  if (has_any_param) {
+    col.set_hnsw_params(read_hnsw_params_from_args(a));
+  }
+
+  std::cout << "Building index for dir=" << dir << " (alive=" << col.alive_count() << ")\n";
+  col.build_index();
+  col.save();
+  std::cout << "Index built and saved.\n";
+  return 0;
+}
+
+static bool parse_query_from_string(const std::string& s,
+                                    std::size_t dim,
+                                    std::vector<float>& out,
+                                    bool force_id) {
+  vecdb::csv::Row row;
+  std::string err;
+  vecdb::csv::Options opt;
+  opt.has_id = force_id;
+  opt.infer_id = !force_id;
+  if (!vecdb::csv::parse_line(s, dim, row, err, opt)) return false;
+  // If user provides "id,..." for --query, ignore id.
+  out = row.vec;
+  return out.size() == dim;
+}
+
+static int cmd_search(const Args& a) {
+  std::string dir;
+  if (!get_kv(a, "--dir", dir)) { std::cerr << "search: missing --dir\n"; return 2; }
+  if (!manifest_exists(dir)) { std::cerr << "search: collection not found (manifest.json missing): " << dir << "\n"; return 2; }
+
+  std::size_t k = get_size_or(a, "--k", 10);
+  std::size_t ef = get_size_or(a, "--ef", 50);
+  bool has_header = has_flag(a, "--header");
+  bool force_id = has_flag(a, "--has-id");
+
+  vecdb::Collection::MetadataFilter filter;
+  std::string ferr;
+  if (!parse_filter(a, filter, ferr)) {
+    std::cerr << "search: " << ferr << "\n";
+    return 2;
+  }
+
+  auto col = vecdb::Collection::open(dir);
+  if (!col.has_index() && filter.empty()) {
+    std::cerr << "search: index not found. Run: vecdb build --dir " << dir << "\n";
+    return 2;
+  }
+
+  std::string qline;
+  std::string qcsv;
+  bool has_qline = get_kv(a, "--query", qline);
+  bool has_qcsv = get_kv(a, "--query_csv", qcsv);
+
+  if (!has_qline && !has_qcsv) {
+    std::cerr << "search: missing --query or --query_csv\n";
+    return 2;
+  }
+
+  if (has_qline) {
+    std::vector<float> q;
+    if (!parse_query_from_string(qline, col.dim(), q, force_id)) {
+      std::cerr << "search: failed to parse --query. Expect: f1,f2,...,f_dim\n";
+      return 2;
+    }
+    auto res = filter.empty() ? col.search(q, k, ef) : col.search(q, k, ef, filter);
+
+    std::cout << "Query=";
+    print_vec(q);
+    std::cout << "\nTop" << res.size() << ":\n";
+    for (auto& r : res) {
+      std::cout << "  index=" << r.index
+                << " id=" << col.id_at(r.index)
+                << " dist=" << std::fixed << std::setprecision(6) << r.distance
+                << "\n";
+    }
+    return 0;
+  }
+
+  // query_csv (multiple queries)
+  std::size_t limit = get_size_or(a, "--limit", static_cast<std::size_t>(-1));
+  std::size_t count = 0;
+
+  vecdb::csv::Options opt;
+  opt.has_header = has_header;
+  opt.has_id = force_id;
+  opt.infer_id = !force_id;
+
+  std::string err;
+  bool ok = vecdb::csv::for_each_row(qcsv, col.dim(),
+    [&](const vecdb::csv::Row& row) -> bool {
+      if (limit != static_cast<std::size_t>(-1) && count >= limit) return false;
+
+      const auto& q = row.vec;
+      auto res = filter.empty() ? col.search(q, k, ef) : col.search(q, k, ef, filter);
+
+      std::cout << "\nQuery#" << count;
+      if (row.has_id) std::cout << " id=" << row.id;
+      std::cout << " q=";
+      print_vec(q);
+      std::cout << "\nTop" << res.size() << ":\n";
+      for (auto& r : res) {
+        std::cout << "  index=" << r.index
+                  << " id=" << col.id_at(r.index)
+                  << " dist=" << std::fixed << std::setprecision(6) << r.distance
+                  << "\n";
+      }
+
+      ++count;
+      return true;
+    }, err, opt);
+
+  if (!ok) {
+    std::cerr << "search query_csv failed: " << err << "\n";
+    return 2;
+  }
+
+  return 0;
+}
+
+static int cmd_stats(const Args& a) {
+  std::string dir;
+  if (!get_kv(a, "--dir", dir)) { std::cerr << "stats: missing --dir\n"; return 2; }
+  if (!manifest_exists(dir)) { std::cerr << "stats: collection not found (manifest.json missing): " << dir << "\n"; return 2; }
+
+  auto col = vecdb::Collection::open(dir);
+
+  std::cout << "Collection dir: " << col.dir() << "\n";
+  std::cout << "dim: " << col.dim() << "\n";
+  std::cout << "metric: " << (col.metric() == vecdb::Metric::L2 ? "l2" : "cosine") << "\n";
+  std::cout << "size(slots): " << col.size() << "\n";
+  std::cout << "alive: " << col.alive_count() << "\n";
+  std::cout << "has_index: " << (col.has_index() ? "true" : "false") << "\n";
+  return 0;
+}
+
+int main(int argc, char** argv) {
+  // If no args, show help (do not auto-run heavy demos).
+  if (argc <= 1) {
+    print_help();
+    return 0;
+  }
+
+  Args a = parse_args(argc, argv);
+  if (a.pos.empty()) {
+    print_help();
+    return 0;
+  }
+
+  const std::string cmd = a.pos[0];
+
+  try {
+    if (cmd == "help" || cmd == "--help" || cmd == "-h") { print_help(); return 0; }
+    if (cmd == "demo") return run_demo();
+    if (cmd == "create") return cmd_create(a);
+    if (cmd == "load") return cmd_load(a);
+    if (cmd == "build") return cmd_build(a);
+    if (cmd == "search") return cmd_search(a);
+    if (cmd == "stats") return cmd_stats(a);
+
+    std::cerr << "unknown command: " << cmd << "\n\n";
+    print_help();
+    return 2;
+  } catch (const std::exception& e) {
+    std::cerr << "error: " << e.what() << "\n";
+    return 2;
+  }
 }

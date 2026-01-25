@@ -5,6 +5,7 @@
 #include <string>
 
 #include "Distance.h"
+#include "Metadata.h"
 #include "VectorStore.h"
 #include "Hnsw.h"
 
@@ -17,6 +18,7 @@ namespace vecdb {
 //   <dir>/vectors.bin     -- contiguous float32 vectors
 //   <dir>/alive.bin       -- alive bitmap (uint8_t per index)
 //   <dir>/ids.txt         -- index -> id (one per line, empty for dead slots)
+//   <dir>/meta.txt        -- index -> metadata (one line per index, key=value;...)
 //   <dir>/hnsw.bin        -- HNSW graph structure (binary)
 //
 // Notes:

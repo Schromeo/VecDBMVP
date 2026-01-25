@@ -31,3 +31,12 @@ add_executable(vecdb_tests "${CMAKE_SOURCE_DIR}/tests/TestMain.cpp")
 target_link_libraries(vecdb_tests PRIVATE vecdb_core)
 
 add_test(NAME vecdb_tests COMMAND vecdb_tests)
+
+# ---------------- CLI CSV test (PowerShell) ----------------
+if (WIN32)
+  add_test(
+    NAME vecdb_cli_csv
+    COMMAND powershell -NoProfile -ExecutionPolicy Bypass -File
+            "${CMAKE_SOURCE_DIR}/tests/run_csv_cli_test.ps1"
+  )
+endif()
