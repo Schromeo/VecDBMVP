@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <queue>
-#include <unordered_set>
 #include <stdexcept>
 #include <limits>
 
@@ -10,23 +9,17 @@ namespace vecdb {
 
 namespace {
 
-// For best-first expansion: smaller distance first
 struct Cand {
   std::size_t index;
   float dist;
 };
 
 struct CandMinHeap {
-  bool operator()(const Cand& a, const Cand& b) const {
-    return a.dist > b.dist;  // makes priority_queue a min-heap
-  }
+  bool operator()(const Cand& a, const Cand& b) const { return a.dist > b.dist; }
 };
 
-// For maintaining best ef results: keep worst on top (max-heap)
 struct ResMaxHeap {
-  bool operator()(const Cand& a, const Cand& b) const {
-    return a.dist < b.dist;  // larger dist has higher priority
-  }
+  bool operator()(const Cand& a, const Cand& b) const { return a.dist < b.dist; }
 };
 
 }  // namespace
@@ -35,6 +28,7 @@ std::vector<SearchResult> Hnsw0::search_layer0(const float* query_ptr,
                                               std::size_t entry,
                                               std::size_t ef_search) const {
   if (!has_entry_ || ef_search == 0) return {};
+  if (!store_.is_alive(entry)) return {};
 
   auto dist_to = [&](std::size_t idx) -> float {
     const float* v = store_.get_ptr(idx);
@@ -42,8 +36,8 @@ std::vector<SearchResult> Hnsw0::search_layer0(const float* query_ptr,
     return Distance::distance(metric_, query_ptr, v, store_.dim());
   };
 
-  std::unordered_set<std::size_t> visited;
-  visited.reserve(ef_search * 8);
+  // --- visited: stamp-array ---
+  visited_.start(store_.size());
 
   float entry_d = dist_to(entry);
 
@@ -52,7 +46,7 @@ std::vector<SearchResult> Hnsw0::search_layer0(const float* query_ptr,
 
   candidates.push({entry, entry_d});
   results.push({entry, entry_d});
-  visited.insert(entry);
+  visited_.set(entry);
 
   while (!candidates.empty()) {
     Cand c = candidates.top();
@@ -63,8 +57,7 @@ std::vector<SearchResult> Hnsw0::search_layer0(const float* query_ptr,
 
     for (std::size_t nb : neighbors_[c.index]) {
       if (!store_.is_alive(nb)) continue;
-      if (visited.find(nb) != visited.end()) continue;
-      visited.insert(nb);
+      if (visited_.test_and_set(nb)) continue;
 
       float d = dist_to(nb);
 
@@ -104,9 +97,6 @@ std::vector<std::size_t> Hnsw0::select_neighbors_simple(const std::vector<Search
   return out;
 }
 
-// HNSW classic heuristic: diversify neighbors.
-// Accept candidate c if for all already selected s:
-//   dist(c, base) < dist(c, s)
 std::vector<std::size_t> Hnsw0::select_neighbors_diverse(std::size_t base,
                                                          const std::vector<SearchResult>& candidates,
                                                          std::size_t M) const {
@@ -120,13 +110,12 @@ std::vector<std::size_t> Hnsw0::select_neighbors_diverse(std::size_t base,
     if (selected.size() >= M) break;
 
     std::size_t c = cand.index;
-    if (!store_.is_alive(c)) continue;
-    if (c == base) continue;
+    if (!store_.is_alive(c) || c == base) continue;
 
     const float* c_ptr = store_.get_ptr(c);
     if (!c_ptr) continue;
 
-    float dc_base = cand.distance;  // candidates are sorted by dist(base, c)
+    float dc_base = cand.distance;
 
     bool ok = true;
     for (std::size_t s : selected) {
@@ -134,7 +123,7 @@ std::vector<std::size_t> Hnsw0::select_neighbors_diverse(std::size_t base,
       if (!s_ptr) continue;
 
       float dc_s = Distance::distance(metric_, c_ptr, s_ptr, store_.dim());
-      if (dc_s < dc_base) {  // too close to an already selected neighbor
+      if (dc_s < dc_base) {
         ok = false;
         break;
       }
@@ -143,8 +132,6 @@ std::vector<std::size_t> Hnsw0::select_neighbors_diverse(std::size_t base,
     if (ok) selected.push_back(c);
   }
 
-  // If heuristic is too strict (possible on random/unstructured data),
-  // fill the remaining slots with nearest candidates to reach M.
   if (selected.size() < M) {
     for (const auto& cand : candidates) {
       if (selected.size() >= M) break;
@@ -165,7 +152,6 @@ void Hnsw0::prune_neighbors(std::size_t node) {
   const float* base = store_.get_ptr(node);
   if (!base) return;
 
-  // Build candidate list: neighbors scored by dist(node, nb)
   std::vector<SearchResult> cand;
   cand.reserve(nbrs.size());
   for (auto nb : nbrs) {
@@ -199,7 +185,6 @@ void Hnsw0::insert(std::size_t index) {
 
   if (index >= neighbors_.size()) neighbors_.resize(index + 1);
 
-  // First node becomes entry point
   if (!has_entry_) {
     entry_point_ = index;
     has_entry_ = true;
@@ -209,7 +194,6 @@ void Hnsw0::insert(std::size_t index) {
   const float* q = store_.get_ptr(index);
   if (!q) return;
 
-  // Candidates are returned sorted by distance to q (base = index)
   auto candidates = search_layer0(q, entry_point_, params_.ef_construction);
 
   candidates.erase(std::remove_if(candidates.begin(), candidates.end(),

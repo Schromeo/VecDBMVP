@@ -5,36 +5,23 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-# Build type default
-if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
-  set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
+# Reasonable warnings (works for GCC/Clang/MinGW)
+if (MSVC)
+  add_compile_options(/W4 /permissive-)
+else()
+  add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
 
-add_executable(vecdb
-  src/main.cpp
-  src/vecdb/Distance.h
-  src/vecdb/Distance.cpp
-  src/vecdb/SearchResult.h
-  src/vecdb/VectorStore.h
-  src/vecdb/VectorStore.cpp
-  src/vecdb/Bruteforce.h
-  src/vecdb/Bruteforce.cpp
-  src/vecdb/Eval.h
-  src/vecdb/Eval.cpp
-  src/vecdb/Hnsw0.h
-  src/vecdb/Hnsw0.cpp
-  src/vecdb/Hnsw.h
-  src/vecdb/Hnsw.cpp
+# Collect sources automatically (so adding new files doesn't require editing CMake)
+file(GLOB_RECURSE VECDB_SOURCES CONFIGURE_DEPENDS
+  "${CMAKE_SOURCE_DIR}/src/*.cpp"
 )
 
+add_executable(vecdb ${VECDB_SOURCES})
 
+target_include_directories(vecdb PRIVATE
+  "${CMAKE_SOURCE_DIR}/src"
+)
 
-
-
-
-# Warnings (cross-platform)
-if(MSVC)
-  target_compile_options(vecdb PRIVATE /W4 /permissive-)
-else()
-  target_compile_options(vecdb PRIVATE -Wall -Wextra -Wpedantic)
-endif()
+# On Windows, filesystem is standard in C++17; no extra link needed for modern toolchains.
+# If you ever hit older GCC issues, you might need: target_link_libraries(vecdb stdc++fs)

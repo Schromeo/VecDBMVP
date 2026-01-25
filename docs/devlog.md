@@ -265,3 +265,117 @@ before correctness is validated against brute-force results.
 **Next**
 - Run A/B (diversity on/off) sweeps on hierarchical HNSW.
 - Compare against HNSW0 curves to quantify improvements.
+
+## 2026-01-24 — Search Optimization: visited stamp
+
+**Done**
+- Replaced `unordered_set` visited tracking with a cache-friendly stamp-array (`Visited`).
+- Reused a single visited buffer inside Hnsw0/Hnsw to avoid per-search allocations.
+- Added overflow-safe stamp reset.
+
+**Why**
+- `unordered_set` incurs heavy hashing and cache-miss overhead at large N / high ef_search.
+- Stamp-array makes visited checks O(1) contiguous memory access.
+
+**Expected impact**
+- Lower query latency (especially for large ef_search) with minimal/no recall change.
+
+
+---
+
+## Milestone: Hierarchical HNSW + Diversity + Persistence (MVP Closed Loop)
+
+**Context**
+
+This milestone completes the first fully runnable VecDB MVP:
+from raw vectors → ANN index → evaluation → persistence → reload & query.
+
+All components now form a closed loop and can be executed end-to-end on both
+Windows and macOS.
+
+---
+
+### What was implemented
+
+#### 1. Hierarchical HNSW (Full)
+
+- Implemented multi-layer HNSW with random level assignment
+- Upper layers are sparse, lower layers dense
+- Search uses greedy descent from top layer, then ef_search expansion at layer 0
+- Parameters:
+  - M / M0
+  - ef_construction
+  - ef_search
+
+#### 2. Neighbor Diversity Heuristic
+
+- Added optional diversity heuristic during neighbor selection
+- Prevents neighbors from collapsing into a single local region
+- A/B comparison:
+  - Index A: diversity OFF
+  - Index B: diversity ON
+- Empirical results show higher recall@k for diversity-enabled index
+  with comparable or better latency
+
+#### 3. Evaluation Harness (Recall / Latency Curve)
+
+- Ground truth computed via brute-force TopK
+- ANN results compared against ground truth
+- Metrics:
+  - recall@k
+  - average latency per query
+- ef_search sweep (10 → 200) shows expected quality–performance tradeoff
+
+Example (N=200k, dim=32, k=10):
+
+- ef_search=50:
+  - recall ≈ 0.78–0.82
+  - latency ≈ 0.1 ms
+- ef_search=200:
+  - recall ≈ 0.96–0.99
+  - latency ≈ 0.3 ms
+
+#### 4. Persistence (Save / Open)
+
+- Added disk persistence for both VectorStore and HNSW graph
+- Saved artifacts:
+  - manifest.json
+  - vectors.bin
+  - alive.bin
+  - ids.txt
+  - hnsw.bin
+- Tombstone deletion preserves index stability across restarts
+- `Collection::open()` restores index without rebuild
+
+Persistence demo verified:
+- save → exit → open → search
+- Returned nearest neighbors and distances match expected L2^2 values
+
+---
+
+### Design choices
+
+- Chose correctness-first:
+  - upsert/remove invalidates index
+  - index rebuilt explicitly
+- Index stability prioritized over compaction
+- Binary format used for graph persistence for efficiency
+
+---
+
+### Known limitations (MVP)
+
+- No concurrent reads/writes
+- No incremental index update
+- No crash-safe atomic writes (WAL/checkpoint not implemented)
+- No SIMD / mmap / compression optimizations
+
+---
+
+### Status
+
+- Core ANN functionality complete
+- Persistence verified
+- Ready to proceed with:
+  - unit / integration tests
+  - README & delivery documentation

@@ -103,3 +103,26 @@ Compared with layer-0-only:
   - often lower latency due to fewer expansions
 - At the same recall:
   - noticeably lower latency (coarse-to-fine routing)
+
+
+---
+
+## Empirical Results
+
+Using the evaluation harness, hierarchical HNSW was benchmarked against
+brute-force search.
+
+Setup:
+- N = 200k vectors
+- dim = 32
+- queries = 200
+- k = 10
+
+Observations:
+- Increasing ef_search improves recall monotonically
+- Diversity heuristic improves recall at medium/high ef_search
+- Latency scales roughly linearly with ef_search
+- Results are consistent with HNSW literature
+
+These results confirm the correctness and practical effectiveness of the
+implementation.

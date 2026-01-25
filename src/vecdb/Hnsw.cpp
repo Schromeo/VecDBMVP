@@ -4,7 +4,6 @@
 #include <cmath>
 #include <queue>
 #include <stdexcept>
-#include <unordered_set>
 #include <limits>
 
 namespace vecdb {
@@ -16,24 +15,20 @@ struct Cand {
   float dist;
 };
 
-// min-heap by dist (priority_queue uses "largest first", so invert)
 struct MinHeap {
   bool operator()(const Cand& a, const Cand& b) const { return a.dist > b.dist; }
 };
 
-// max-heap by dist (worst on top)
 struct MaxHeap {
   bool operator()(const Cand& a, const Cand& b) const { return a.dist < b.dist; }
 };
 
-// Very small LCG for deterministic RNG across platforms (enough for level sampling)
 static inline unsigned lcg_next(unsigned& state) {
   state = state * 1664525u + 1013904223u;
   return state;
 }
 
 static inline float lcg_uniform01(unsigned& state) {
-  // take top 24 bits -> [0,1)
   unsigned x = lcg_next(state) >> 8;
   return static_cast<float>(x) / static_cast<float>(1u << 24);
 }
@@ -51,18 +46,15 @@ int Hnsw::node_level(std::size_t index) const {
 }
 
 int Hnsw::random_level() {
-  // geometric distribution: P(level >= l) ~ exp(-l / level_mult)
-  // MVP: use coin-flip-ish based on exp(-1/level_mult)
   if (!rng_inited_) {
     rng_state_ = params_.seed;
     rng_inited_ = true;
   }
 
-  const float p = std::exp(-1.0f / std::max(0.0001f, params_.level_mult)); // in (0,1)
+  const float p = std::exp(-1.0f / std::max(0.0001f, params_.level_mult));
   int lvl = 0;
   while (lcg_uniform01(rng_state_) < p) {
     ++lvl;
-    // safety cap
     if (lvl > 64) break;
   }
   return lvl;
@@ -81,8 +73,8 @@ std::vector<SearchResult> Hnsw::search_level(const float* query_ptr,
     return Distance::distance(metric_, query_ptr, v, store_.dim());
   };
 
-  std::unordered_set<std::size_t> visited;
-  visited.reserve(ef * 8);
+  // --- visited: stamp-array ---
+  visited_.start(store_.size());
 
   float entry_d = dist_to(entry);
 
@@ -91,7 +83,7 @@ std::vector<SearchResult> Hnsw::search_level(const float* query_ptr,
 
   candidates.push({entry, entry_d});
   results.push({entry, entry_d});
-  visited.insert(entry);
+  visited_.set(entry);
 
   while (!candidates.empty()) {
     Cand c = candidates.top();
@@ -101,13 +93,12 @@ std::vector<SearchResult> Hnsw::search_level(const float* query_ptr,
     if (c.dist > worst.dist) break;
 
     int nl = node_level(c.index);
-    if (nl < level) continue; // node doesn't have this level
+    if (nl < level) continue;
 
     const auto& nbrs = graph_[c.index].links[level];
     for (std::size_t nb : nbrs) {
       if (!store_.is_alive(nb)) continue;
-      if (visited.find(nb) != visited.end()) continue;
-      visited.insert(nb);
+      if (visited_.test_and_set(nb)) continue;
 
       float d = dist_to(nb);
 
@@ -155,8 +146,6 @@ std::vector<std::size_t> Hnsw::select_neighbors_simple(const std::vector<SearchR
   return out;
 }
 
-// HNSW classic heuristic: accept c if for all selected s:
-// dist(c, base) < dist(c, s)
 std::vector<std::size_t> Hnsw::select_neighbors_diverse(std::size_t base,
                                                         const std::vector<SearchResult>& candidates,
                                                         std::size_t M) const {
@@ -192,7 +181,6 @@ std::vector<std::size_t> Hnsw::select_neighbors_diverse(std::size_t base,
     if (ok) selected.push_back(c);
   }
 
-  // fill if too strict
   if (selected.size() < M) {
     for (const auto& cand : candidates) {
       if (selected.size() >= M) break;
@@ -258,7 +246,6 @@ void Hnsw::insert(std::size_t index) {
   int lvl = random_level();
   graph_[index].links.resize(static_cast<std::size_t>(lvl + 1));
 
-  // first node
   if (!has_entry_) {
     entry_point_ = index;
     has_entry_ = true;
@@ -269,13 +256,11 @@ void Hnsw::insert(std::size_t index) {
   const float* q = store_.get_ptr(index);
   if (!q) return;
 
-  // Start from current entry point and descend greedily from max_level_ down to lvl+1
   std::size_t ep = entry_point_;
   for (int l = max_level_; l > lvl; --l) {
     ep = greedy_descent(q, ep, l);
   }
 
-  // For levels <= lvl, search with efConstruction and connect neighbors
   for (int l = std::min(lvl, max_level_); l >= 0; --l) {
     auto candidates = search_level(q, ep, l, params_.ef_construction);
 
@@ -288,19 +273,15 @@ void Hnsw::insert(std::size_t index) {
         params_.use_diversity ? select_neighbors_diverse(index, candidates, M)
                               : select_neighbors_simple(candidates, M);
 
-    // connect bidirectionally on this level
     for (auto nb : chosen) {
       ensure_node(nb);
-      // Make sure neighbor has links for this level (it might not)
       if (node_level(nb) < l) continue;
       connect_bidirectional(index, nb, l);
     }
 
-    // update entry point for next lower level search: best found at this level
     if (!candidates.empty()) ep = candidates[0].index;
   }
 
-  // If node has a higher level than current max, become new entry point
   if (lvl > max_level_) {
     max_level_ = lvl;
     entry_point_ = index;
@@ -317,7 +298,6 @@ std::vector<SearchResult> Hnsw::search(const std::vector<float>& query,
 
   const float* q = query.data();
 
-  // Greedy descent from top layers
   std::size_t ep = entry_point_;
   for (int l = max_level_; l > 0; --l) {
     ep = greedy_descent(q, ep, l);
@@ -327,6 +307,64 @@ std::vector<SearchResult> Hnsw::search(const std::vector<float>& query,
   auto res = search_level(q, ep, /*level=*/0, ef);
   if (res.size() > k) res.resize(k);
   return res;
+}
+
+// ---------------- Persistence export/import ----------------
+
+Hnsw::Export Hnsw::export_graph() const {
+  Export ex;
+  ex.entry_point = entry_point_;
+  ex.has_entry = has_entry_;
+  ex.max_level = max_level_;
+
+  // Ensure export size matches store size (stable index universe).
+  const std::size_t N = store_.size();
+  ex.nodes.resize(N);
+
+  // graph_ may be smaller if no nodes inserted; resize logic is safe.
+  for (std::size_t i = 0; i < N; ++i) {
+    if (i >= graph_.size() || graph_[i].links.empty()) {
+      ex.nodes[i].level = -1;
+      ex.nodes[i].links.clear();
+      continue;
+    }
+    int lvl = static_cast<int>(graph_[i].links.size()) - 1;
+    ex.nodes[i].level = lvl;
+    ex.nodes[i].links = graph_[i].links;  // deep copy
+  }
+  return ex;
+}
+
+void Hnsw::import_graph(const Export& ex) {
+  // Import graph structure exactly as saved.
+  entry_point_ = ex.entry_point;
+  has_entry_ = ex.has_entry;
+  max_level_ = ex.max_level;
+
+  // We expect exported nodes to match store.size() universe.
+  const std::size_t N = store_.size();
+  if (ex.nodes.size() != N) {
+    throw std::runtime_error("Hnsw::import_graph: node count mismatch vs store.size()");
+  }
+
+  graph_.clear();
+  graph_.resize(N);
+
+  for (std::size_t i = 0; i < N; ++i) {
+    const auto& n = ex.nodes[i];
+    if (n.level < 0) {
+      graph_[i].links.clear();
+      continue;
+    }
+    // Basic validation: links size should be level+1
+    if (n.links.size() != static_cast<std::size_t>(n.level + 1)) {
+      throw std::runtime_error("Hnsw::import_graph: links size mismatch at node " + std::to_string(i));
+    }
+    graph_[i].links = n.links;
+  }
+
+  // After import, we should consider RNG state uninitialized.
+  rng_inited_ = false;
 }
 
 }  // namespace vecdb
