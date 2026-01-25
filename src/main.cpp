@@ -19,6 +19,31 @@ static void print_vec(const std::vector<float>& v) {
   std::cout << "]";
 }
 
+static void run_sweep(const std::string& title,
+                      vecdb::Evaluator& eval,
+                      vecdb::Bruteforce& truth,
+                      vecdb::Hnsw0& index,
+                      const std::vector<std::vector<float>>& queries,
+                      std::size_t k,
+                      const std::vector<std::size_t>& ef_values) {
+  std::cout << "\n" << title << "\n";
+  std::cout << "ef_search\trecall@k\tavg_latency_ms\n";
+  for (std::size_t ef : ef_values) {
+    auto report = eval.evaluate(
+        queries, k,
+        [&](const std::vector<float>& q, std::size_t kk) {
+          return truth.search(q, kk);
+        },
+        [&](const std::vector<float>& q, std::size_t kk) {
+          return index.search(q, kk, ef);
+        });
+
+    std::cout << ef << "\t\t"
+              << report.recall_at_k << "\t\t"
+              << report.avg_latency_ms << "\n";
+  }
+}
+
 int main() {
   std::cout << "VecDB MVP starting...\n";
 
@@ -132,13 +157,13 @@ int main() {
   }
 
   // ------------------------------------------------------------
-  // Eval + HNSW0 ef_search sweep
+  // Eval + HNSW0 A/B test (diversity OFF vs ON)
   // ------------------------------------------------------------
   {
     std::cout << "\nEval harness demo (truth=bruteforce, approx=HNSW0):\n";
 
     const std::size_t dim = 32;
-    const std::size_t N = 500000;
+    const std::size_t N = 500000;       // adjust as you like
     const std::size_t num_queries = 200;
     const std::size_t k = 10;
 
@@ -158,15 +183,6 @@ int main() {
       for (float& x : q) x = uni(rng);
 
     vecdb::Bruteforce truth(store, vecdb::Metric::L2);
-
-    vecdb::Hnsw0::Params hp;
-    hp.M = 16;
-    hp.ef_construction = 100;
-    vecdb::Hnsw0 hnsw(store, vecdb::Metric::L2, hp);
-
-    for (std::size_t i = 0; i < store.size(); ++i)
-      if (store.is_alive(i)) hnsw.insert(i);
-
     vecdb::Evaluator eval(store);
 
     std::vector<std::size_t> ef_values = {10, 20, 50, 100, 200};
@@ -175,27 +191,39 @@ int main() {
               << " dim=" << dim
               << " queries=" << num_queries
               << " k=" << k
-              << " M=" << hp.M
-              << " efC=" << hp.ef_construction << "\n\n";
+              << "\n";
 
-    std::cout << "ef_search\trecall@k\tavg_latency_ms\n";
+    // ---- Build index A: diversity OFF ----
+    vecdb::Hnsw0::Params pA;
+    pA.M = 16;
+    pA.ef_construction = 100;
+    pA.use_diversity = false;
+    vecdb::Hnsw0 hnswA(store, vecdb::Metric::L2, pA);
 
-    for (std::size_t ef : ef_values) {
-      auto report = eval.evaluate(
-          queries, k,
-          [&](const std::vector<float>& q, std::size_t kk) {
-            return truth.search(q, kk);
-          },
-          [&](const std::vector<float>& q, std::size_t kk) {
-            return hnsw.search(q, kk, ef);
-          });
+    for (std::size_t i = 0; i < store.size(); ++i)
+      if (store.is_alive(i)) hnswA.insert(i);
 
-      std::cout << ef << "\t\t"
-                << report.recall_at_k << "\t\t"
-                << report.avg_latency_ms << "\n";
-    }
+    std::cout << "Index A params: M=" << pA.M << " efC=" << pA.ef_construction
+              << " use_diversity=" << (pA.use_diversity ? "true" : "false") << "\n";
+
+    // ---- Build index B: diversity ON ----
+    vecdb::Hnsw0::Params pB;
+    pB.M = 16;
+    pB.ef_construction = 100;
+    pB.use_diversity = true;
+    vecdb::Hnsw0 hnswB(store, vecdb::Metric::L2, pB);
+
+    for (std::size_t i = 0; i < store.size(); ++i)
+      if (store.is_alive(i)) hnswB.insert(i);
+
+    std::cout << "Index B params: M=" << pB.M << " efC=" << pB.ef_construction
+              << " use_diversity=" << (pB.use_diversity ? "true" : "false") << "\n";
+
+    // ---- Sweeps ----
+    run_sweep("\n[A] Diversity OFF", eval, truth, hnswA, queries, k, ef_values);
+    run_sweep("\n[B] Diversity ON",  eval, truth, hnswB, queries, k, ef_values);
   }
 
-  std::cout << "\nNext: neighbor diversity heuristic, then hierarchical HNSW.\n";
+  std::cout << "\nNext: hierarchical HNSW.\n";
   return 0;
 }
