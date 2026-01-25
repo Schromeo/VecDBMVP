@@ -83,3 +83,31 @@ Planned next steps:
 * concurrency support
 * more robust persistence (WAL, atomic writes)
 
+## Tests
+
+This repo includes a minimal unit + integration test runner (no external deps).
+
+### Build & run tests
+
+```bash
+cmake -S . -B build
+cmake --build build -j
+./build/vecdb_tests   # Windows: vecdb_tests.exe
+````
+
+Or via CTest:
+
+```bash
+cd build
+ctest --output-on-failure
+```
+
+### Coverage
+
+* Distance: L2^2 / cosine / normalize sanity
+* VectorStore: upsert/update, tombstone deletion, stable indices
+* Bruteforce: correctness on a small manual dataset
+* HNSW: average recall sanity on small random dataset
+* Persistence: create → upsert → build_index → save → open → search (top1 + distance)
+
+

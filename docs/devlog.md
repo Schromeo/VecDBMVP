@@ -379,3 +379,24 @@ Persistence demo verified:
 - Ready to proceed with:
   - unit / integration tests
   - README & delivery documentation
+
+---
+
+## Milestone: Tests (Unit + Integration)
+
+Added a standalone test executable `vecdb_tests` (no external frameworks) and a CTest target.
+
+### What is covered
+- Distance sanity checks (L2^2, cosine, normalization)
+- VectorStore operations (upsert/update, tombstone deletion, stable indices)
+- Bruteforce correctness on a manual toy dataset
+- HNSW recall sanity on a small random dataset
+- Persistence roundtrip: create → upsert → build_index → save → open → search
+
+### How to run
+```bash
+cmake -S . -B build
+cmake --build build -j
+./build/vecdb_tests
+# or:
+cd build && ctest --output-on-failure
