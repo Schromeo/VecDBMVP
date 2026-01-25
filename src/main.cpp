@@ -8,7 +8,7 @@
 #include "vecdb/VectorStore.h"
 #include "vecdb/Bruteforce.h"
 #include "vecdb/Eval.h"
-#include "vecdb/Hnsw0.h"
+#include "vecdb/Hnsw.h"
 
 static void print_vec(const std::vector<float>& v) {
   std::cout << "[";
@@ -22,7 +22,7 @@ static void print_vec(const std::vector<float>& v) {
 static void run_sweep(const std::string& title,
                       vecdb::Evaluator& eval,
                       vecdb::Bruteforce& truth,
-                      vecdb::Hnsw0& index,
+                      vecdb::Hnsw& index,
                       const std::vector<std::vector<float>>& queries,
                       std::size_t k,
                       const std::vector<std::size_t>& ef_values) {
@@ -157,13 +157,13 @@ int main() {
   }
 
   // ------------------------------------------------------------
-  // Eval + HNSW0 A/B test (diversity OFF vs ON)
+  // Eval + Hierarchical HNSW A/B test
   // ------------------------------------------------------------
   {
-    std::cout << "\nEval harness demo (truth=bruteforce, approx=HNSW0):\n";
+    std::cout << "\nEval harness demo (truth=bruteforce, approx=HNSW):\n";
 
     const std::size_t dim = 32;
-    const std::size_t N = 500000;       // adjust as you like
+    const std::size_t N = 500000;
     const std::size_t num_queries = 200;
     const std::size_t k = 10;
 
@@ -193,37 +193,46 @@ int main() {
               << " k=" << k
               << "\n";
 
-    // ---- Build index A: diversity OFF ----
-    vecdb::Hnsw0::Params pA;
+    // ---- Index A: diversity OFF ----
+    vecdb::Hnsw::Params pA;
     pA.M = 16;
+    pA.M0 = 32;
     pA.ef_construction = 100;
     pA.use_diversity = false;
-    vecdb::Hnsw0 hnswA(store, vecdb::Metric::L2, pA);
+    pA.seed = 123;
+    vecdb::Hnsw hnswA(store, vecdb::Metric::L2, pA);
 
     for (std::size_t i = 0; i < store.size(); ++i)
       if (store.is_alive(i)) hnswA.insert(i);
 
-    std::cout << "Index A params: M=" << pA.M << " efC=" << pA.ef_construction
-              << " use_diversity=" << (pA.use_diversity ? "true" : "false") << "\n";
+    std::cout << "Index A params: M=" << pA.M << " M0=" << pA.M0
+              << " efC=" << pA.ef_construction
+              << " use_diversity=" << (pA.use_diversity ? "true" : "false")
+              << " max_level=" << hnswA.max_level()
+              << "\n";
 
-    // ---- Build index B: diversity ON ----
-    vecdb::Hnsw0::Params pB;
+    // ---- Index B: diversity ON ----
+    vecdb::Hnsw::Params pB;
     pB.M = 16;
+    pB.M0 = 32;
     pB.ef_construction = 100;
     pB.use_diversity = true;
-    vecdb::Hnsw0 hnswB(store, vecdb::Metric::L2, pB);
+    pB.seed = 123;
+    vecdb::Hnsw hnswB(store, vecdb::Metric::L2, pB);
 
     for (std::size_t i = 0; i < store.size(); ++i)
       if (store.is_alive(i)) hnswB.insert(i);
 
-    std::cout << "Index B params: M=" << pB.M << " efC=" << pB.ef_construction
-              << " use_diversity=" << (pB.use_diversity ? "true" : "false") << "\n";
+    std::cout << "Index B params: M=" << pB.M << " M0=" << pB.M0
+              << " efC=" << pB.ef_construction
+              << " use_diversity=" << (pB.use_diversity ? "true" : "false")
+              << " max_level=" << hnswB.max_level()
+              << "\n";
 
-    // ---- Sweeps ----
-    run_sweep("\n[A] Diversity OFF", eval, truth, hnswA, queries, k, ef_values);
-    run_sweep("\n[B] Diversity ON",  eval, truth, hnswB, queries, k, ef_values);
+    run_sweep("[A] Diversity OFF (Hierarchical HNSW)", eval, truth, hnswA, queries, k, ef_values);
+    run_sweep("[B] Diversity ON  (Hierarchical HNSW)", eval, truth, hnswB, queries, k, ef_values);
   }
 
-  std::cout << "\nNext: hierarchical HNSW.\n";
+  std::cout << "\nNext: compare curves vs HNSW0, then tune M/M0/efC and implement persistence.\n";
   return 0;
 }

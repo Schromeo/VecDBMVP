@@ -246,3 +246,22 @@ before correctness is validated against brute-force results.
 **Next**
 - Re-run ef_search sweep and compare curves (diversity on/off).
 - Implement hierarchical HNSW (multi-level) for faster navigation.
+
+## 2026-01-24 — Hierarchical HNSW (Multi-level)
+
+**Done**
+- Implemented hierarchical HNSW with:
+  - random level assignment
+  - greedy descent on upper layers (ef=1)
+  - efConstruction search + connect + prune per layer
+  - layer-0 search with efSearch
+- Kept neighbor diversity heuristic as a configurable option.
+- Used per-node adjacency storage to avoid huge per-layer vector overhead at large N.
+
+**Why**
+- Layer-0-only ANN degrades at large N.
+- Hierarchical navigation enables coarse-to-fine routing, improving recall/latency trade-off.
+
+**Next**
+- Run A/B (diversity on/off) sweeps on hierarchical HNSW.
+- Compare against HNSW0 curves to quantify improvements.

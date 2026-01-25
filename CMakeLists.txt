@@ -23,7 +23,10 @@ add_executable(vecdb
   src/vecdb/Eval.cpp
   src/vecdb/Hnsw0.h
   src/vecdb/Hnsw0.cpp
+  src/vecdb/Hnsw.h
+  src/vecdb/Hnsw.cpp
 )
+
 
 
 
