@@ -219,6 +219,19 @@ auto res2 = col.search(q, /*k=*/10, /*ef_search=*/100, f);
 
 ---
 
+## Simple Benchmark
+
+The built-in demo includes an HNSW recall/latency sweep.
+
+Example (N=200k, dim=32, k=10):
+
+- ef_search=50: recall ≈ 0.78–0.82, avg latency ≈ 0.1 ms
+- ef_search=200: recall ≈ 0.96–0.99, avg latency ≈ 0.3 ms
+
+Numbers are approximate and depend on hardware.
+
+---
+
 ## Status
 
 This project is an MVP intended for learning and exploration.
