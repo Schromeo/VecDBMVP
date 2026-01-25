@@ -5,23 +5,29 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-# Reasonable warnings (works for GCC/Clang/MinGW)
+# Warnings
 if (MSVC)
   add_compile_options(/W4 /permissive-)
 else()
   add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
 
-# Collect sources automatically (so adding new files doesn't require editing CMake)
-file(GLOB_RECURSE VECDB_SOURCES CONFIGURE_DEPENDS
-  "${CMAKE_SOURCE_DIR}/src/*.cpp"
+# ---------------- Core library (all vecdb implementation files) ----------------
+file(GLOB_RECURSE VECDB_CORE_SOURCES CONFIGURE_DEPENDS
+  "${CMAKE_SOURCE_DIR}/src/vecdb/*.cpp"
 )
 
-add_executable(vecdb ${VECDB_SOURCES})
+add_library(vecdb_core ${VECDB_CORE_SOURCES})
+target_include_directories(vecdb_core PUBLIC "${CMAKE_SOURCE_DIR}/src")
 
-target_include_directories(vecdb PRIVATE
-  "${CMAKE_SOURCE_DIR}/src"
-)
+# ---------------- Demo executable (your current main) ----------------
+add_executable(vecdb "${CMAKE_SOURCE_DIR}/src/main.cpp")
+target_link_libraries(vecdb PRIVATE vecdb_core)
 
-# On Windows, filesystem is standard in C++17; no extra link needed for modern toolchains.
-# If you ever hit older GCC issues, you might need: target_link_libraries(vecdb stdc++fs)
+# ---------------- Tests executable ----------------
+enable_testing()
+
+add_executable(vecdb_tests "${CMAKE_SOURCE_DIR}/tests/TestMain.cpp")
+target_link_libraries(vecdb_tests PRIVATE vecdb_core)
+
+add_test(NAME vecdb_tests COMMAND vecdb_tests)
