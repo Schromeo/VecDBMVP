@@ -427,6 +427,19 @@ Persistence demo verified:
 
 ---
 
+## 2026-01-25 — Project Wrap-up
+
+**Summary**
+- Core VecDB MVP complete: storage, HNSW, persistence, evaluation, CLI, metadata.
+- Robust CSV ingestion + metadata filtering.
+- Concurrency support (multi-reader/single-writer) and expanded tests.
+
+**Deliverables Ready**
+- Source code, README, docs, and tests are complete.
+- CTest integration and verbose test runner available.
+
+---
+
 ## Milestone: Tests (Unit + Integration)
 
 Added a standalone test executable `vecdb_tests` (no external frameworks) and a CTest target.

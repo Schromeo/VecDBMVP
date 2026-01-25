@@ -69,6 +69,18 @@ The executable runs:
 
 The executable supports a simple CLI for CSV ingest and search.
 
+### Quick start (CLI)
+
+```bash
+cmake -S . -B build
+cmake --build build -j
+python scripts/generate_csv.py
+./build/vecdb.exe create --dir data/my_collection --dim 16 --metric l2
+./build/vecdb.exe load --dir data/my_collection --csv data/vectors.csv --header
+./build/vecdb.exe build --dir data/my_collection --M 16 --M0 32 --efC 100 --diversity 1
+./build/vecdb.exe search --dir data/my_collection --query_csv data/queries.csv --k 5 --ef 50 --header
+````
+
 ### CSV format
 
 - **vectors.csv**: `id,v0,v1,...,v(dim-1)`
@@ -78,6 +90,16 @@ Notes:
 - Use `--header` if your CSV has a header row.
 - Use `--has-id` if your id column is numeric (e.g., `123,0.1,0.2,...`).
 - Use `--meta` if your CSV has a trailing metadata column (`key=value;key2=value2`).
+
+### CLI parameter summary
+
+| Command | Required | Optional |
+| --- | --- | --- |
+| `create` | `--dir`, `--dim` | `--metric`, `--M`, `--M0`, `--efC`, `--diversity`, `--seed`, `--level_mult` |
+| `load` | `--dir`, `--csv` | `--header`, `--meta`, `--build` |
+| `build` | `--dir` | `--metric`, `--M`, `--M0`, `--efC`, `--diversity`, `--seed`, `--level_mult` |
+| `search` | `--dir`, (`--query` or `--query_csv`) | `--k`, `--ef`, `--limit`, `--header`, `--has-id`, `--filter` |
+| `stats` | `--dir` | - |
 
 ### Create → load → build
 

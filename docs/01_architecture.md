@@ -2,6 +2,26 @@
 
 ## Components
 
+### High-level flow (ASCII)
+
+```
+								+------------------+
+								|   Collection     |
+								+------------------+
+									|   read/write
+									v
+	 +----------------------+      +---------------------+
+	 |     VectorStore      |<---->|       Serializer    |
+	 | (vectors + metadata) |      | (manifest/bin files)|
+	 +----------------------+      +---------------------+
+									|
+									| indices
+									v
+						 +---------+
+						 |  HNSW   |
+						 +---------+
+```
+
 ### VectorStore (data plane)
 - Stores embeddings in a contiguous `vector<float>` layout.
 - Maintains `id -> index` and `index -> id`.
